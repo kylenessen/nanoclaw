@@ -239,13 +239,15 @@ export class TelegramChannel implements Channel {
 
         await new Promise<void>((resolve, reject) => {
           const dest = fs.createWriteStream(tmpPath);
-          https.get(fileUrl, (response) => {
-            response.pipe(dest);
-            dest.on('finish', () => {
-              dest.close();
-              resolve();
-            });
-          }).on('error', reject);
+          https
+            .get(fileUrl, (response) => {
+              response.pipe(dest);
+              dest.on('finish', () => {
+                dest.close();
+                resolve();
+              });
+            })
+            .on('error', reject);
         });
 
         // Transcribe
