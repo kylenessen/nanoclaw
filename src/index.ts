@@ -216,6 +216,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
+  // Determine voice mode from the messages being processed (not global state)
+  // If any message in the batch is voice-originated, respond with voice
+  const isVoiceMode = voiceOriginatedChats.has(chatJid);
+
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
@@ -228,7 +232,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
         // Voice-originated: convert response to audio and send as voice
-        if (voiceOriginatedChats.has(chatJid) && channel.sendVoice) {
+        if (isVoiceMode && channel.sendVoice) {
           try {
             const audioPath = textToSpeech(text);
             await channel.sendVoice(chatJid, audioPath);
@@ -641,6 +645,11 @@ async function main(): Promise<void> {
   });
   startIpcWatcher({
     sendMessage: (jid, text) => {
+      // Suppress IPC send_message in voice mode — no intermediate chatter
+      if (voiceOriginatedChats.has(jid)) {
+        logger.debug({ jid }, 'Suppressing IPC message in voice mode');
+        return Promise.resolve();
+      }
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       return channel.sendMessage(jid, text);
