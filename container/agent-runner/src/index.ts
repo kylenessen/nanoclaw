@@ -400,6 +400,7 @@ async function runQuery(
     prompt: stream,
     options: {
       model: process.env.CLAUDE_MODEL || undefined,
+      betas: ['context-1m-2025-08-07'],
       cwd: WORKSPACE_GROUP,
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
