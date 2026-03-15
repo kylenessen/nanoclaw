@@ -358,6 +358,7 @@ async function runBareMetalAgent(
     'ANTHROPIC_API_KEY',
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_BASE_URL',
+    'CLAUDE_MODEL',
   ]);
 
   // Build environment for the agent process
@@ -383,6 +384,9 @@ async function runBareMetalAgent(
   }
   if (secrets.ANTHROPIC_BASE_URL) {
     agentEnv.ANTHROPIC_BASE_URL = secrets.ANTHROPIC_BASE_URL;
+  }
+  if (secrets.CLAUDE_MODEL) {
+    agentEnv.CLAUDE_MODEL = secrets.CLAUDE_MODEL;
   }
 
   const processName = `nanoclaw-bare-${group.folder}-${Date.now()}`;
