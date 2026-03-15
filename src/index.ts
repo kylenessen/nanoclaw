@@ -59,7 +59,11 @@ import {
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import { textToSpeech, cleanupTtsFile } from './voice.js';
 import { logger } from './logger.js';
+
+// Track which chats have a pending voice-originated message
+const voiceOriginatedChats = new Set<string>();
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -223,7 +227,19 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        await channel.sendMessage(chatJid, text);
+        // Voice-originated: convert response to audio and send as voice
+        if (voiceOriginatedChats.has(chatJid) && channel.sendVoice) {
+          try {
+            const audioPath = textToSpeech(text);
+            await channel.sendVoice(chatJid, audioPath);
+            cleanupTtsFile(audioPath);
+          } catch (ttsErr) {
+            logger.error({ ttsErr }, 'TTS failed, falling back to text');
+            await channel.sendMessage(chatJid, text);
+          }
+        } else {
+          await channel.sendMessage(chatJid, text);
+        }
         outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
@@ -241,6 +257,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
+  // Clear voice flag after response cycle completes
+  voiceOriginatedChats.delete(chatJid);
 
   if (output === 'error' || hadError) {
     // If we already sent output to the user, don't roll back the cursor —
@@ -565,6 +583,10 @@ async function main(): Promise<void> {
         }
       }
       storeMessage(msg);
+      // Track voice-originated messages so responses can be sent as audio
+      if (msg.is_voice) {
+        voiceOriginatedChats.add(chatJid);
+      }
     },
     onChatMetadata: (
       chatJid: string,
