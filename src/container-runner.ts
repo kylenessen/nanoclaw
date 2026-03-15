@@ -333,7 +333,12 @@ async function runBareMetalAgent(
   fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
 
   // Copy agent-runner source into per-group location (same as container mode)
-  const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
+  const agentRunnerSrc = path.join(
+    projectRoot,
+    'container',
+    'agent-runner',
+    'src',
+  );
   const groupAgentRunnerDir = path.join(
     DATA_DIR,
     'sessions',
@@ -348,11 +353,15 @@ async function runBareMetalAgent(
   const globalDir = path.join(GROUPS_DIR, 'global');
 
   // Read real API credentials for direct use (no proxy needed)
-  const secrets = readEnvFile(['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL']);
+  const secrets = readEnvFile([
+    'ANTHROPIC_API_KEY',
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'ANTHROPIC_BASE_URL',
+  ]);
 
   // Build environment for the agent process
   const agentEnv: Record<string, string> = {
-    ...process.env as Record<string, string>,
+    ...(process.env as Record<string, string>),
     TZ: TIMEZONE,
     // Path overrides so agent-runner uses host paths instead of /workspace/*
     NANOCLAW_WORKSPACE_GROUP: groupDir,
@@ -526,7 +535,14 @@ async function runBareMetalAgent(
         `Exit Code: ${code}`,
       ];
       if (code !== 0 || process.env.LOG_LEVEL === 'debug') {
-        logLines.push('', `=== Stderr ===`, stderr, '', `=== Stdout ===`, stdout);
+        logLines.push(
+          '',
+          `=== Stderr ===`,
+          stderr,
+          '',
+          `=== Stdout ===`,
+          stdout,
+        );
       }
       fs.writeFileSync(logFile, logLines.join('\n'));
 
