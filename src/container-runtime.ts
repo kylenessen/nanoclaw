@@ -1,12 +1,19 @@
 /**
  * Container runtime abstraction for NanoClaw.
  * All runtime-specific logic lives here so swapping runtimes means changing one file.
+ *
+ * Set NANOCLAW_BARE_METAL=1 to run agents as local Node.js processes
+ * instead of inside containers. This gives agents full host access
+ * (Apple services, filesystem, etc.) but removes sandbox isolation.
  */
 import { execSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 
 import { logger } from './logger.js';
+
+/** Whether to run agents directly on the host instead of in containers. */
+export const BARE_METAL = process.env.NANOCLAW_BARE_METAL === '1';
 
 /** The container runtime binary name. */
 export const CONTAINER_RUNTIME_BIN = 'docker';
@@ -64,6 +71,10 @@ export function stopContainer(name: string): string {
 
 /** Ensure the container runtime is running, starting it if needed. */
 export function ensureContainerRuntimeRunning(): void {
+  if (BARE_METAL) {
+    logger.info('Bare metal mode — skipping container runtime check');
+    return;
+  }
   try {
     execSync(`${CONTAINER_RUNTIME_BIN} info`, {
       stdio: 'pipe',
@@ -102,6 +113,7 @@ export function ensureContainerRuntimeRunning(): void {
 
 /** Kill orphaned NanoClaw containers from previous runs. */
 export function cleanupOrphans(): void {
+  if (BARE_METAL) return;
   try {
     const output = execSync(
       `${CONTAINER_RUNTIME_BIN} ps --filter name=nanoclaw- --format '{{.Names}}'`,

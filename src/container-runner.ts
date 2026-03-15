@@ -19,6 +19,7 @@ import {
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
+  BARE_METAL,
   CONTAINER_HOST_GATEWAY,
   CONTAINER_RUNTIME_BIN,
   hostGatewayArgs,
@@ -26,6 +27,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -264,12 +266,342 @@ function buildContainerArgs(
   return args;
 }
 
+/**
+ * Bare metal runner: spawns the agent-runner as a local Node.js process
+ * instead of inside a Docker container. The agent gets full host access.
+ */
+async function runBareMetalAgent(
+  group: RegisteredGroup,
+  input: ContainerInput,
+  onProcess: (proc: ChildProcess, containerName: string) => void,
+  onOutput?: (output: ContainerOutput) => Promise<void>,
+): Promise<ContainerOutput> {
+  const startTime = Date.now();
+  const projectRoot = process.cwd();
+
+  const groupDir = resolveGroupFolderPath(group.folder);
+  fs.mkdirSync(groupDir, { recursive: true });
+
+  const isMain = input.isMain;
+
+  // Build the agent-runner path (compiled JS in container/agent-runner/dist/)
+  const agentRunnerDir = path.join(projectRoot, 'container', 'agent-runner');
+  const agentRunnerEntry = path.join(agentRunnerDir, 'dist', 'index.js');
+
+  // Per-group sessions directory (same as container mode)
+  const groupSessionsDir = path.join(
+    DATA_DIR,
+    'sessions',
+    group.folder,
+    '.claude',
+  );
+  fs.mkdirSync(groupSessionsDir, { recursive: true });
+  const settingsFile = path.join(groupSessionsDir, 'settings.json');
+  if (!fs.existsSync(settingsFile)) {
+    fs.writeFileSync(
+      settingsFile,
+      JSON.stringify(
+        {
+          env: {
+            CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+            CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+            CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+          },
+        },
+        null,
+        2,
+      ) + '\n',
+    );
+  }
+
+  // Sync skills
+  const skillsSrc = path.join(projectRoot, 'container', 'skills');
+  const skillsDst = path.join(groupSessionsDir, 'skills');
+  if (fs.existsSync(skillsSrc)) {
+    for (const skillDir of fs.readdirSync(skillsSrc)) {
+      const srcDir = path.join(skillsSrc, skillDir);
+      if (!fs.statSync(srcDir).isDirectory()) continue;
+      const dstDir = path.join(skillsDst, skillDir);
+      fs.cpSync(srcDir, dstDir, { recursive: true });
+    }
+  }
+
+  // Per-group IPC directory
+  const groupIpcDir = resolveGroupIpcPath(group.folder);
+  fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'tasks'), { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
+
+  // Copy agent-runner source into per-group location (same as container mode)
+  const agentRunnerSrc = path.join(projectRoot, 'container', 'agent-runner', 'src');
+  const groupAgentRunnerDir = path.join(
+    DATA_DIR,
+    'sessions',
+    group.folder,
+    'agent-runner-src',
+  );
+  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
+    fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
+  }
+
+  // Global memory directory
+  const globalDir = path.join(GROUPS_DIR, 'global');
+
+  // Read real API credentials for direct use (no proxy needed)
+  const secrets = readEnvFile(['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL']);
+
+  // Build environment for the agent process
+  const agentEnv: Record<string, string> = {
+    ...process.env as Record<string, string>,
+    TZ: TIMEZONE,
+    // Path overrides so agent-runner uses host paths instead of /workspace/*
+    NANOCLAW_WORKSPACE_GROUP: groupDir,
+    NANOCLAW_WORKSPACE_IPC: groupIpcDir,
+    NANOCLAW_WORKSPACE_GLOBAL: globalDir,
+    NANOCLAW_WORKSPACE_PROJECT: isMain ? projectRoot : '',
+    // Point Claude sessions at the per-group directory
+    CLAUDE_CONFIG_DIR: groupSessionsDir,
+    HOME: path.dirname(groupSessionsDir), // so ~/.claude resolves to groupSessionsDir
+  };
+
+  // Pass API credentials directly
+  if (secrets.ANTHROPIC_API_KEY) {
+    agentEnv.ANTHROPIC_API_KEY = secrets.ANTHROPIC_API_KEY;
+  }
+  if (secrets.CLAUDE_CODE_OAUTH_TOKEN) {
+    agentEnv.CLAUDE_CODE_OAUTH_TOKEN = secrets.CLAUDE_CODE_OAUTH_TOKEN;
+  }
+  if (secrets.ANTHROPIC_BASE_URL) {
+    agentEnv.ANTHROPIC_BASE_URL = secrets.ANTHROPIC_BASE_URL;
+  }
+
+  const processName = `nanoclaw-bare-${group.folder}-${Date.now()}`;
+
+  logger.info(
+    {
+      group: group.name,
+      processName,
+      agentRunner: agentRunnerEntry,
+      isMain,
+    },
+    'Spawning bare metal agent',
+  );
+
+  const logsDir = path.join(groupDir, 'logs');
+  fs.mkdirSync(logsDir, { recursive: true });
+
+  return new Promise((resolve) => {
+    const agent = spawn('node', [agentRunnerEntry], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      cwd: agentRunnerDir,
+      env: agentEnv,
+    });
+
+    onProcess(agent, processName);
+
+    let stdout = '';
+    let stderr = '';
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
+
+    agent.stdin.write(JSON.stringify(input));
+    agent.stdin.end();
+
+    // Streaming output parsing (identical to container mode)
+    let parseBuffer = '';
+    let newSessionId: string | undefined;
+    let outputChain = Promise.resolve();
+    let timedOut = false;
+    let hadStreamingOutput = false;
+    const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
+    const timeoutMs = Math.max(configTimeout, IDLE_TIMEOUT + 30_000);
+
+    const killOnTimeout = () => {
+      timedOut = true;
+      logger.error(
+        { group: group.name, processName },
+        'Bare metal agent timeout, sending SIGTERM',
+      );
+      agent.kill('SIGTERM');
+      setTimeout(() => {
+        if (!agent.killed) agent.kill('SIGKILL');
+      }, 15000);
+    };
+
+    let timeout = setTimeout(killOnTimeout, timeoutMs);
+
+    const resetTimeout = () => {
+      clearTimeout(timeout);
+      timeout = setTimeout(killOnTimeout, timeoutMs);
+    };
+
+    agent.stdout.on('data', (data) => {
+      const chunk = data.toString();
+
+      if (!stdoutTruncated) {
+        const remaining = CONTAINER_MAX_OUTPUT_SIZE - stdout.length;
+        if (chunk.length > remaining) {
+          stdout += chunk.slice(0, remaining);
+          stdoutTruncated = true;
+        } else {
+          stdout += chunk;
+        }
+      }
+
+      if (onOutput) {
+        parseBuffer += chunk;
+        let startIdx: number;
+        while ((startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER)) !== -1) {
+          const endIdx = parseBuffer.indexOf(OUTPUT_END_MARKER, startIdx);
+          if (endIdx === -1) break;
+
+          const jsonStr = parseBuffer
+            .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
+            .trim();
+          parseBuffer = parseBuffer.slice(endIdx + OUTPUT_END_MARKER.length);
+
+          try {
+            const parsed: ContainerOutput = JSON.parse(jsonStr);
+            if (parsed.newSessionId) newSessionId = parsed.newSessionId;
+            hadStreamingOutput = true;
+            resetTimeout();
+            outputChain = outputChain.then(() => onOutput(parsed));
+          } catch (err) {
+            logger.warn(
+              { group: group.name, error: err },
+              'Failed to parse streamed output chunk',
+            );
+          }
+        }
+      }
+    });
+
+    agent.stderr.on('data', (data) => {
+      const chunk = data.toString();
+      const lines = chunk.trim().split('\n');
+      for (const line of lines) {
+        if (line) logger.debug({ bare: group.folder }, line);
+      }
+      if (stderrTruncated) return;
+      const remaining = CONTAINER_MAX_OUTPUT_SIZE - stderr.length;
+      if (chunk.length > remaining) {
+        stderr += chunk.slice(0, remaining);
+        stderrTruncated = true;
+      } else {
+        stderr += chunk;
+      }
+    });
+
+    agent.on('close', (code) => {
+      clearTimeout(timeout);
+      const duration = Date.now() - startTime;
+
+      if (timedOut) {
+        if (hadStreamingOutput) {
+          logger.info(
+            { group: group.name, processName, duration, code },
+            'Bare metal agent timed out after output (idle cleanup)',
+          );
+          outputChain.then(() => {
+            resolve({ status: 'success', result: null, newSessionId });
+          });
+          return;
+        }
+        resolve({
+          status: 'error',
+          result: null,
+          error: `Agent timed out after ${configTimeout}ms`,
+        });
+        return;
+      }
+
+      // Write log file
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const logFile = path.join(logsDir, `bare-${timestamp}.log`);
+      const logLines = [
+        `=== Bare Metal Agent Log ===`,
+        `Timestamp: ${new Date().toISOString()}`,
+        `Group: ${group.name}`,
+        `Duration: ${duration}ms`,
+        `Exit Code: ${code}`,
+      ];
+      if (code !== 0 || process.env.LOG_LEVEL === 'debug') {
+        logLines.push('', `=== Stderr ===`, stderr, '', `=== Stdout ===`, stdout);
+      }
+      fs.writeFileSync(logFile, logLines.join('\n'));
+
+      if (code !== 0) {
+        logger.error(
+          { group: group.name, code, duration, logFile },
+          'Bare metal agent exited with error',
+        );
+        resolve({
+          status: 'error',
+          result: null,
+          error: `Agent exited with code ${code}: ${stderr.slice(-200)}`,
+        });
+        return;
+      }
+
+      if (onOutput) {
+        outputChain.then(() => {
+          logger.info(
+            { group: group.name, duration, newSessionId },
+            'Bare metal agent completed (streaming mode)',
+          );
+          resolve({ status: 'success', result: null, newSessionId });
+        });
+        return;
+      }
+
+      // Legacy mode: parse last output marker
+      try {
+        const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
+        const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
+        let jsonLine: string;
+        if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+          jsonLine = stdout
+            .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
+            .trim();
+        } else {
+          const lines = stdout.trim().split('\n');
+          jsonLine = lines[lines.length - 1];
+        }
+        const output: ContainerOutput = JSON.parse(jsonLine);
+        resolve(output);
+      } catch (err) {
+        resolve({
+          status: 'error',
+          result: null,
+          error: `Failed to parse agent output: ${err instanceof Error ? err.message : String(err)}`,
+        });
+      }
+    });
+
+    agent.on('error', (err) => {
+      clearTimeout(timeout);
+      logger.error(
+        { group: group.name, processName, error: err },
+        'Bare metal agent spawn error',
+      );
+      resolve({
+        status: 'error',
+        result: null,
+        error: `Agent spawn error: ${err.message}`,
+      });
+    });
+  });
+}
+
 export async function runContainerAgent(
   group: RegisteredGroup,
   input: ContainerInput,
   onProcess: (proc: ChildProcess, containerName: string) => void,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<ContainerOutput> {
+  if (BARE_METAL) {
+    return runBareMetalAgent(group, input, onProcess, onOutput);
+  }
   const startTime = Date.now();
 
   const groupDir = resolveGroupFolderPath(group.folder);
