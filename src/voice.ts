@@ -30,7 +30,7 @@ export function transcribe(audioPath: string): string {
     // Transcribe with parakeet-mlx
     const result = execSync(
       `parakeet-mlx ${JSON.stringify(wavPath)} --output-format txt --output-dir ${JSON.stringify(tmpDir)}`,
-      { encoding: 'utf-8', stdio: 'pipe', timeout: 60000 },
+      { encoding: 'utf-8', stdio: 'pipe', timeout: 300000 },
     );
 
     // Read the transcript file
