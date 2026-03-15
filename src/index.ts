@@ -584,8 +584,11 @@ async function main(): Promise<void> {
       }
       storeMessage(msg);
       // Track voice-originated messages so responses can be sent as audio
+      // Text messages clear the flag — respond in kind
       if (msg.is_voice) {
         voiceOriginatedChats.add(chatJid);
+      } else {
+        voiceOriginatedChats.delete(chatJid);
       }
     },
     onChatMetadata: (
