@@ -4,6 +4,7 @@
  */
 import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import {
@@ -369,8 +370,8 @@ async function runBareMetalAgent(
     NANOCLAW_WORKSPACE_GLOBAL: globalDir,
     NANOCLAW_WORKSPACE_PROJECT: isMain ? projectRoot : '',
     // Point Claude sessions at the per-group directory
+    // Keep real HOME so OAuth credentials in ~/.claude.json are found
     CLAUDE_CONFIG_DIR: groupSessionsDir,
-    HOME: path.dirname(groupSessionsDir), // so ~/.claude resolves to groupSessionsDir
   };
 
   // Pass API credentials directly
