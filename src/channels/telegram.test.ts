@@ -610,7 +610,9 @@ describe('TelegramChannel', () => {
 
       // Voice handler calls ctx.getFile() which will throw, triggering the fallback
       const ctx = createMediaCtx({});
-      (ctx as any).getFile = vi.fn().mockRejectedValue(new Error('download failed'));
+      (ctx as any).getFile = vi
+        .fn()
+        .mockRejectedValue(new Error('download failed'));
       await triggerMediaMessage('message:voice', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
