@@ -213,7 +213,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
-  let voiceOutputSent = false; // Only send first output as voice to prevent spam
+
+  // In voice mode, buffer all outputs and only send the final one as voice.
+  // Intermediate outputs (status updates, tool summaries) are suppressed.
+  const isVoiceMode = isLastMessageVoice(chatJid) && !!channel.sendVoice;
+  let lastVoiceText: string | null = null;
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
@@ -226,27 +230,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        // Check voice mode dynamically — the latest message in the DB
-        // determines response format, so piped text messages after a voice
-        // message correctly switch back to text responses.
-        const isVoiceMode = isLastMessageVoice(chatJid);
-        if (isVoiceMode && channel.sendVoice && !voiceOutputSent) {
-          // Only TTS the first output per invocation — subsequent outputs
-          // (e.g. status updates, tool result summaries) go as text to
-          // prevent a flood of short voice memos.
-          try {
-            const audioPath = await textToSpeech(text);
-            await channel.sendVoice(chatJid, audioPath);
-            cleanupTtsFile(audioPath);
-            voiceOutputSent = true;
-          } catch (ttsErr) {
-            logger.error({ ttsErr }, 'TTS failed, falling back to text');
-            await channel.sendMessage(chatJid, text);
-          }
+        if (isVoiceMode) {
+          // Buffer — only the final output will be TTS'd after the agent finishes
+          lastVoiceText = text;
         } else {
           await channel.sendMessage(chatJid, text);
+          outputSentToUser = true;
         }
-        outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
@@ -260,6 +250,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       hadError = true;
     }
   });
+
+  // Send the final buffered voice output
+  if (isVoiceMode && lastVoiceText) {
+    try {
+      const audioPath = await textToSpeech(lastVoiceText);
+      await channel.sendVoice!(chatJid, audioPath);
+      cleanupTtsFile(audioPath);
+      outputSentToUser = true;
+    } catch (ttsErr) {
+      logger.error({ ttsErr }, 'TTS failed, falling back to text');
+      await channel.sendMessage(chatJid, lastVoiceText);
+      outputSentToUser = true;
+    }
+  }
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
