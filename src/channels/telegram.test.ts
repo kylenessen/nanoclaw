@@ -40,6 +40,7 @@ vi.mock('grammy', () => ({
     api = {
       sendMessage: vi.fn().mockResolvedValue(undefined),
       sendChatAction: vi.fn().mockResolvedValue(undefined),
+      setMyCommands: vi.fn().mockResolvedValue(undefined),
     };
 
     constructor(token: string) {
@@ -834,7 +835,15 @@ describe('TelegramChannel', () => {
   // --- setTyping ---
 
   describe('setTyping', () => {
-    it('sends typing action when isTyping is true', async () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('sends typing action immediately and starts interval when isTyping is true', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
@@ -845,16 +854,43 @@ describe('TelegramChannel', () => {
         '100200300',
         'typing',
       );
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(1);
+
+      // After 4 seconds, should refresh
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(2);
+
+      // Clean up
+      await channel.setTyping('tg:100200300', false);
     });
 
-    it('does nothing when isTyping is false', async () => {
+    it('clears interval when isTyping is false', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
+      await channel.setTyping('tg:100200300', true);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(1);
+
       await channel.setTyping('tg:100200300', false);
 
-      expect(currentBot().api.sendChatAction).not.toHaveBeenCalled();
+      // Advancing time should not trigger more calls
+      await vi.advanceTimersByTimeAsync(8000);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not stack intervals for the same jid', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.setTyping('tg:100200300', true);
+      await channel.setTyping('tg:100200300', true);
+
+      // Only one immediate call, second setTyping is a no-op
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(1);
+
+      await channel.setTyping('tg:100200300', false);
     });
 
     it('does nothing when bot is not initialized', async () => {
@@ -872,13 +908,16 @@ describe('TelegramChannel', () => {
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
-      currentBot().api.sendChatAction.mockRejectedValueOnce(
+      currentBot().api.sendChatAction.mockRejectedValue(
         new Error('Rate limited'),
       );
 
       await expect(
         channel.setTyping('tg:100200300', true),
       ).resolves.toBeUndefined();
+
+      // Clean up
+      await channel.setTyping('tg:100200300', false);
     });
   });
 
