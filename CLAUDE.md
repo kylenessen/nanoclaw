@@ -55,6 +55,34 @@ systemctl --user stop nanoclaw
 systemctl --user restart nanoclaw
 ```
 
+## Voice Pipeline
+
+Three launchd services run on the host (all auto-start at login, `KeepAlive: true`):
+
+| Service | Plist | Port | Purpose |
+|---------|-------|------|---------|
+| NanoClaw | `com.nanoclaw.plist` | — | Main orchestrator (Node.js) |
+| TTS Server | `com.nanoclaw.tts-server.plist` | 7890 | Persistent Qwen3-TTS model for voice synthesis |
+| STT Server | `com.nanoclaw.stt-server.plist` | 7891 | Persistent Parakeet-MLX model for transcription |
+
+The TTS and STT servers keep their ML models loaded in memory so voice requests don't pay a cold-start penalty. `src/voice.ts` tries the server first, falls back to CLI if unreachable.
+
+```bash
+# Manage voice servers
+launchctl kickstart -k gui/$(id -u)/com.nanoclaw.tts-server  # restart TTS
+launchctl kickstart -k gui/$(id -u)/com.nanoclaw.stt-server  # restart STT
+
+# Check status
+curl -s http://127.0.0.1:7890  # TTS (POST to generate)
+curl -s http://127.0.0.1:7891  # STT (POST to transcribe)
+
+# Logs
+tail -f logs/tts-server.log
+tail -f logs/stt-server.log
+```
+
+Voice message flow: Telegram voice note → STT server (port 7891) transcribes to text → stored with `is_voice: true` → agent responds → TTS server (port 7890) synthesizes response → sent as Telegram voice message.
+
 ## Troubleshooting
 
 **WhatsApp not connecting after upgrade:** WhatsApp is now a separate channel fork, not bundled in core. Run `/add-whatsapp` (or `git remote add whatsapp https://github.com/qwibitai/nanoclaw-whatsapp.git && git fetch whatsapp main && (git merge whatsapp/main || { git checkout --theirs package-lock.json && git add package-lock.json && git merge --continue; }) && npm run build`) to install it. Existing auth credentials and groups are preserved.
