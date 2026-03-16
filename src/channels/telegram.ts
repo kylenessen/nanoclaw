@@ -5,7 +5,6 @@ import { promisify } from 'util';
 import { Api, Bot, InputFile } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
-import { deleteSession } from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { transcribe } from '../voice.js';
@@ -23,6 +22,7 @@ export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  resetSession: (groupFolder: string) => void;
 }
 
 /**
@@ -96,13 +96,14 @@ export class TelegramChannel implements Channel {
         return;
       }
       try {
-        // Kill agent processes for this specific group
+        // Mark session as reset BEFORE killing the agent, so the dying
+        // agent's close handler doesn't write the old session ID back.
+        this.opts.resetSession(group.folder);
         try {
           await execAsync(`pkill -f "nanoclaw-bare-${group.folder}"`);
         } catch {
           /* no process to kill */
         }
-        deleteSession(group.folder);
         ctx.reply('Fresh session started.');
         logger.info(
           { chatJid, folder: group.folder },

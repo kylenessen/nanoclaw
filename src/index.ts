@@ -37,6 +37,7 @@ import {
   getRouterState,
   initDatabase,
   isLastMessageVoice,
+  deleteSession,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -71,6 +72,9 @@ let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
+// Groups whose session was intentionally reset via /new.
+// Prevents the dying agent's close handler from writing the old session back.
+const sessionResetPending = new Set<string>();
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
@@ -325,10 +329,11 @@ async function runAgent(
     new Set(Object.keys(registeredGroups)),
   );
 
-  // Wrap onOutput to track session ID from streamed results
+  // Wrap onOutput to track session ID from streamed results.
+  // Skip session writes if /new reset is pending (the old agent is dying).
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
-        if (output.newSessionId) {
+        if (output.newSessionId && !sessionResetPending.has(group.folder)) {
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
         }
@@ -352,7 +357,11 @@ async function runAgent(
       wrappedOnOutput,
     );
 
-    if (output.newSessionId) {
+    // Clear the reset flag now that the old agent has finished.
+    // The next agent run will start a fresh session.
+    sessionResetPending.delete(group.folder);
+
+    if (output.newSessionId && !sessionResetPending.has(group.folder)) {
       sessions[group.folder] = output.newSessionId;
       setSession(group.folder, output.newSessionId);
     }
@@ -562,8 +571,18 @@ async function main(): Promise<void> {
     }
   }
 
+  // Reset session: clears both in-memory and DB state, marks the group
+  // so the dying agent's close handler doesn't write the old session back.
+  function resetSession(groupFolder: string): void {
+    delete sessions[groupFolder];
+    deleteSession(groupFolder);
+    sessionResetPending.add(groupFolder);
+    logger.info({ groupFolder }, 'Session reset (in-memory + DB cleared)');
+  }
+
   // Channel callbacks (shared by all channels)
   const channelOpts = {
+    resetSession,
     onMessage: (chatJid: string, msg: NewMessage) => {
       // Remote control commands — intercept before storage
       const trimmed = msg.content.trim();
