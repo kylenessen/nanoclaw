@@ -14,6 +14,11 @@ vi.mock('../config.js', () => ({
   TRIGGER_PATTERN: /^@Andy\b/i,
 }));
 
+// Mock voice transcription
+vi.mock('../voice.js', () => ({
+  transcribe: vi.fn().mockResolvedValue('transcribed text'),
+}));
+
 // Mock logger
 vi.mock('../logger.js', () => ({
   logger: {
@@ -598,17 +603,21 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('stores voice message with placeholder', async () => {
+    it('falls back to placeholder when voice transcription fails', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
+      // Voice handler calls ctx.getFile() which will throw, triggering the fallback
       const ctx = createMediaCtx({});
+      (ctx as any).getFile = vi.fn().mockRejectedValue(new Error('download failed'));
       await triggerMediaMessage('message:voice', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
-        expect.objectContaining({ content: '[Voice message]' }),
+        expect.objectContaining({
+          content: '[Voice message - transcription failed]',
+        }),
       );
     });
 

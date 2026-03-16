@@ -229,6 +229,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
+        // Stop typing — we're about to send the response
+        await channel.setTyping?.(chatJid, false);
         // Check voice mode dynamically per-output so modality matches
         // the user's most recent message, not the one that started the session.
         const useVoice = isLastMessageVoice(chatJid) && !!channel.sendVoice;
