@@ -97,7 +97,7 @@ Transcribed voice memos live at `~/Dropbox/ramble/processed/`. Kyle uses these f
 
 ## Memory
 
-Your workspace at `/workspace/group/` persists between sessions. Use it:
+Your current working directory is your persistent workspace — it survives between sessions. Use it:
 
 - `conversations/` — searchable history of past conversations
 - Create topical files for structured knowledge (`kyle-preferences.md`, `obligations.md`, etc.)

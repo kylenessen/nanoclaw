@@ -6,7 +6,7 @@ This is Kyle's direct Telegram chat — your primary channel. All messages are p
 
 You have admin privileges from this channel:
 - Manage scheduled tasks (create, pause, cancel)
-- Access the NanoClaw project at `/workspace/project/` (read-only)
+- Access the NanoClaw project (check `$NANOCLAW_WORKSPACE_PROJECT` for the path)
 - Access the message database at `/workspace/project/store/messages.db`
 - Register and manage additional chat groups if needed
 
