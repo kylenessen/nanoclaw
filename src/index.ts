@@ -231,7 +231,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         const isVoiceMode = isLastMessageVoice(chatJid);
         if (isVoiceMode && channel.sendVoice) {
           try {
-            const audioPath = textToSpeech(text);
+            const audioPath = await textToSpeech(text);
             await channel.sendVoice(chatJid, audioPath);
             cleanupTtsFile(audioPath);
           } catch (ttsErr) {

@@ -1,13 +1,16 @@
+import { exec } from 'child_process';
 import fs from 'fs';
 import https from 'https';
+import { promisify } from 'util';
 import { Api, Bot, InputFile } from 'grammy';
 
-import { execSync } from 'child_process';
-
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
+import { deleteSession } from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { transcribe } from '../voice.js';
+
+const execAsync = promisify(exec);
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
   Channel,
@@ -93,14 +96,12 @@ export class TelegramChannel implements Channel {
         return;
       }
       try {
-        // Kill active agent processes for this group
+        // Kill agent processes for this specific group
         try {
-          execSync(`pkill -f "agent-runner/dist"`, { stdio: 'pipe' });
+          await execAsync(`pkill -f "nanoclaw-bare-${group.folder}"`);
         } catch {
           /* no process to kill */
         }
-        // Clear session from DB
-        const { deleteSession } = await import('../db.js');
         deleteSession(group.folder);
         ctx.reply('Fresh session started.');
         logger.info(
@@ -282,7 +283,7 @@ export class TelegramChannel implements Channel {
         });
 
         // Transcribe
-        const text = transcribe(tmpPath);
+        const text = await transcribe(tmpPath);
         fs.unlinkSync(tmpPath);
 
         logger.info(

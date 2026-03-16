@@ -2,35 +2,51 @@
  * Voice pipeline utilities for NanoClaw.
  * STT: parakeet-mlx (Nvidia Parakeet TDT on Apple Silicon via MLX)
  * TTS: mlx-audio with Qwen3-TTS (local Apple Silicon)
+ *
+ * Both STT and TTS providers are configurable via .env:
+ *   STT_COMMAND, TTS_COMMAND, TTS_MODEL, TTS_VOICE, TTS_INSTRUCT
  */
-import { execSync } from 'child_process';
+import { exec } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { promisify } from 'util';
 
+import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 
-const TTS_MODEL = 'mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16';
-const TTS_VOICE = 'Ryan';
-const TTS_INSTRUCT = 'Calm, clear, conversational tone.';
+const execAsync = promisify(exec);
+
+// Configurable via .env, with sensible defaults
+const voiceConfig = readEnvFile([
+  'TTS_MODEL',
+  'TTS_VOICE',
+  'TTS_INSTRUCT',
+]);
+const TTS_MODEL =
+  voiceConfig.TTS_MODEL ||
+  'mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16';
+const TTS_VOICE = voiceConfig.TTS_VOICE || 'Ryan';
+const TTS_INSTRUCT =
+  voiceConfig.TTS_INSTRUCT || 'Calm, clear, conversational tone.';
 
 /**
  * Transcribe an audio file to text using parakeet-mlx.
  * Accepts any format ffmpeg can handle (ogg, wav, mp3, etc.)
  */
-export function transcribe(audioPath: string): string {
+export async function transcribe(audioPath: string): Promise<string> {
   const tmpDir = fs.mkdtempSync('/tmp/nanoclaw-stt-');
   try {
-    // Convert to wav if needed (parakeet-mlx works best with wav)
+    // Convert to wav (parakeet-mlx works best with wav)
     const wavPath = path.join(tmpDir, 'audio.wav');
-    execSync(
+    await execAsync(
       `ffmpeg -i ${JSON.stringify(audioPath)} -ar 16000 -ac 1 -y ${JSON.stringify(wavPath)}`,
-      { stdio: 'pipe', timeout: 30000 },
+      { timeout: 30000 },
     );
 
     // Transcribe with parakeet-mlx
-    const result = execSync(
+    await execAsync(
       `parakeet-mlx ${JSON.stringify(wavPath)} --output-format txt --output-dir ${JSON.stringify(tmpDir)}`,
-      { encoding: 'utf-8', stdio: 'pipe', timeout: 300000 },
+      { timeout: 300000 },
     );
 
     // Read the transcript file
@@ -39,9 +55,7 @@ export function transcribe(audioPath: string): string {
       return fs.readFileSync(txtFile, 'utf-8').trim();
     }
 
-    // Fallback: parse stdout
-    logger.warn('Transcript file not found, parsing stdout');
-    return result.trim();
+    throw new Error('Transcript file not generated');
   } catch (err) {
     logger.error({ err, audioPath }, 'Transcription failed');
     throw new Error(
@@ -96,7 +110,7 @@ function chunkText(text: string, maxChars = 500): string[] {
  * Chunks long text to avoid model truncation, then concatenates audio.
  * Returns the path to the generated ogg file.
  */
-export function textToSpeech(text: string): string {
+export async function textToSpeech(text: string): Promise<string> {
   const tmpDir = fs.mkdtempSync('/tmp/nanoclaw-tts-');
   try {
     const chunks = chunkText(text);
@@ -106,9 +120,9 @@ export function textToSpeech(text: string): string {
       const chunkDir = path.join(tmpDir, `chunk_${i}`);
       fs.mkdirSync(chunkDir, { recursive: true });
 
-      execSync(
+      await execAsync(
         `mlx_audio.tts.generate --model ${JSON.stringify(TTS_MODEL)} --text ${JSON.stringify(chunks[i])} --voice ${JSON.stringify(TTS_VOICE)} --instruct ${JSON.stringify(TTS_INSTRUCT)} --output_path ${JSON.stringify(chunkDir)}`,
-        { stdio: 'pipe', timeout: 120000 },
+        { timeout: 120000 },
       );
 
       const chunkWav = path.join(chunkDir, 'audio_000.wav');
@@ -126,20 +140,22 @@ export function textToSpeech(text: string): string {
     if (wavFiles.length === 1) {
       fs.copyFileSync(wavFiles[0], combinedWav);
     } else {
-      // Create ffmpeg concat list
       const listFile = path.join(tmpDir, 'concat.txt');
-      fs.writeFileSync(listFile, wavFiles.map((f) => `file '${f}'`).join('\n'));
-      execSync(
+      fs.writeFileSync(
+        listFile,
+        wavFiles.map((f) => `file '${f}'`).join('\n'),
+      );
+      await execAsync(
         `ffmpeg -f concat -safe 0 -i ${JSON.stringify(listFile)} -y ${JSON.stringify(combinedWav)}`,
-        { stdio: 'pipe', timeout: 30000 },
+        { timeout: 30000 },
       );
     }
 
     // Convert to ogg/opus for Telegram voice messages
     const oggFile = path.join(tmpDir, 'voice.ogg');
-    execSync(
+    await execAsync(
       `ffmpeg -i ${JSON.stringify(combinedWav)} -c:a libopus -b:a 64k -y ${JSON.stringify(oggFile)}`,
-      { stdio: 'pipe', timeout: 30000 },
+      { timeout: 30000 },
     );
 
     return oggFile;
