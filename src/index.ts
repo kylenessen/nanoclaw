@@ -62,9 +62,6 @@ import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { textToSpeech, cleanupTtsFile } from './voice.js';
 import { logger } from './logger.js';
 
-// Track which chats have a pending voice-originated message
-const voiceOriginatedChats = new Set<string>();
-
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
 
@@ -216,9 +213,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  // Determine voice mode from the messages being processed (not global state)
-  // If any message in the batch is voice-originated, respond with voice
-  const isVoiceMode = voiceOriginatedChats.has(chatJid);
+  // Determine voice mode from the last message in the batch
+  // If the most recent message was voice, respond with voice
+  // SQLite returns is_voice as 1/0 integer, NewMessage has it as boolean
+  const lastMsg = missedMessages[missedMessages.length - 1];
+  const isVoiceMode = !!(lastMsg?.is_voice);
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
@@ -261,8 +260,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
-  // Clear voice flag after response cycle completes
-  voiceOriginatedChats.delete(chatJid);
 
   if (output === 'error' || hadError) {
     // If we already sent output to the user, don't roll back the cursor —
@@ -587,13 +584,6 @@ async function main(): Promise<void> {
         }
       }
       storeMessage(msg);
-      // Track voice-originated messages so responses can be sent as audio
-      // Text messages clear the flag — respond in kind
-      if (msg.is_voice) {
-        voiceOriginatedChats.add(chatJid);
-      } else {
-        voiceOriginatedChats.delete(chatJid);
-      }
     },
     onChatMetadata: (
       chatJid: string,
@@ -645,11 +635,6 @@ async function main(): Promise<void> {
   });
   startIpcWatcher({
     sendMessage: (jid, text) => {
-      // Suppress IPC send_message in voice mode — no intermediate chatter
-      if (voiceOriginatedChats.has(jid)) {
-        logger.debug({ jid }, 'Suppressing IPC message in voice mode');
-        return Promise.resolve();
-      }
       const channel = findChannel(channels, jid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
       return channel.sendMessage(jid, text);
