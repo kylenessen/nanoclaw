@@ -103,7 +103,10 @@ export class TelegramChannel implements Channel {
         const { deleteSession } = await import('../db.js');
         deleteSession(group.folder);
         ctx.reply('Fresh session started.');
-        logger.info({ chatJid, folder: group.folder }, 'Session reset via /new');
+        logger.info(
+          { chatJid, folder: group.folder },
+          'Session reset via /new',
+        );
       } catch (err) {
         logger.error({ err }, 'Failed to reset session');
         ctx.reply('Failed to reset session.');
@@ -320,6 +323,13 @@ export class TelegramChannel implements Channel {
     this.bot.catch((err) => {
       logger.error({ err: err.message }, 'Telegram bot error');
     });
+
+    // Register bot commands with Telegram so they show in the menu
+    await this.bot.api.setMyCommands([
+      { command: 'new', description: 'Start a fresh session' },
+      { command: 'ping', description: 'Check if Dex is online' },
+      { command: 'chatid', description: 'Get this chat\'s ID' },
+    ]);
 
     // Start polling — returns a Promise that resolves when started
     return new Promise<void>((resolve) => {
