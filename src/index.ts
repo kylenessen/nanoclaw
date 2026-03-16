@@ -221,7 +221,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // In voice mode, buffer all outputs and only send the final one as voice.
   // Intermediate outputs (status updates, tool summaries) are suppressed.
   const isVoiceMode = isLastMessageVoice(chatJid) && !!channel.sendVoice;
-  let lastVoiceText: string | null = null;
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
@@ -235,8 +234,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
         if (isVoiceMode) {
-          // Buffer — only the final output will be TTS'd after the agent finishes
-          lastVoiceText = text;
+          // TTS and send immediately — can't wait for runAgent to return
+          // since the container stays alive for idle-wait (30 min).
+          try {
+            const audioPath = await textToSpeech(text);
+            await channel.sendVoice!(chatJid, audioPath);
+            cleanupTtsFile(audioPath);
+            outputSentToUser = true;
+          } catch (ttsErr) {
+            logger.error({ ttsErr }, 'TTS failed, falling back to text');
+            await channel.sendMessage(chatJid, text);
+            outputSentToUser = true;
+          }
         } else {
           await channel.sendMessage(chatJid, text);
           outputSentToUser = true;
@@ -254,20 +263,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       hadError = true;
     }
   });
-
-  // Send the final buffered voice output
-  if (isVoiceMode && lastVoiceText) {
-    try {
-      const audioPath = await textToSpeech(lastVoiceText);
-      await channel.sendVoice!(chatJid, audioPath);
-      cleanupTtsFile(audioPath);
-      outputSentToUser = true;
-    } catch (ttsErr) {
-      logger.error({ ttsErr }, 'TTS failed, falling back to text');
-      await channel.sendMessage(chatJid, lastVoiceText);
-      outputSentToUser = true;
-    }
-  }
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
