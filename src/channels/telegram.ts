@@ -285,12 +285,18 @@ export class TelegramChannel implements Channel {
 
         // Transcribe
         const text = await transcribe(tmpPath);
-        fs.unlinkSync(tmpPath);
+        try { fs.unlinkSync(tmpPath); } catch { /* best effort */ }
 
         logger.info(
           { chatJid, senderName, textLength: text.length },
           'Voice message transcribed',
         );
+
+        if (!text) {
+          logger.warn({ chatJid }, 'Voice transcription returned empty text');
+          storeNonText(ctx, '[Voice message - transcription returned empty]');
+          return;
+        }
 
         this.opts.onMessage(chatJid, {
           id: ctx.message.message_id.toString(),
