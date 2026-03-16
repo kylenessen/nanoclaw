@@ -328,7 +328,7 @@ export class TelegramChannel implements Channel {
     await this.bot.api.setMyCommands([
       { command: 'new', description: 'Start a fresh session' },
       { command: 'ping', description: 'Check if Dex is online' },
-      { command: 'chatid', description: 'Get this chat\'s ID' },
+      { command: 'chatid', description: "Get this chat's ID" },
     ]);
 
     // Start polling — returns a Promise that resolves when started

@@ -128,10 +128,7 @@ export function textToSpeech(text: string): string {
     } else {
       // Create ffmpeg concat list
       const listFile = path.join(tmpDir, 'concat.txt');
-      fs.writeFileSync(
-        listFile,
-        wavFiles.map((f) => `file '${f}'`).join('\n'),
-      );
+      fs.writeFileSync(listFile, wavFiles.map((f) => `file '${f}'`).join('\n'));
       execSync(
         `ffmpeg -f concat -safe 0 -i ${JSON.stringify(listFile)} -y ${JSON.stringify(combinedWav)}`,
         { stdio: 'pipe', timeout: 30000 },
