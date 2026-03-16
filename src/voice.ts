@@ -28,10 +28,11 @@ const voiceConfig = readEnvFile([
   'TTS_REF_AUDIO',
   'TTS_REF_TEXT',
   'TTS_SERVER_URL',
+  'STT_SERVER_URL',
 ]);
 
-const TTS_SERVER_URL =
-  voiceConfig.TTS_SERVER_URL || 'http://127.0.0.1:7890';
+const TTS_SERVER_URL = voiceConfig.TTS_SERVER_URL || 'http://127.0.0.1:7890';
+const STT_SERVER_URL = voiceConfig.STT_SERVER_URL || 'http://127.0.0.1:7891';
 
 // Voice cloning mode: Base model + reference audio
 const TTS_REF_AUDIO = voiceConfig.TTS_REF_AUDIO || 'audio/c3po_ref.wav';
@@ -56,10 +57,57 @@ const TTS_INSTRUCT =
   voiceConfig.TTS_INSTRUCT || 'Calm, clear, conversational tone.';
 
 /**
+ * Transcribe via the persistent STT server.
+ * Returns the text, or null if the server is unreachable.
+ */
+async function transcribeViaServer(
+  audioPath: string,
+): Promise<string | null> {
+  try {
+    const resp = await fetch(STT_SERVER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio_path: audioPath }),
+      signal: AbortSignal.timeout(300000),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.text();
+      throw new Error(`STT server error ${resp.status}: ${err}`);
+    }
+
+    const result = (await resp.json()) as {
+      status: string;
+      text: string;
+    };
+    if (result.status === 'ok') {
+      return result.text;
+    }
+    throw new Error(`STT server returned status: ${result.status}`);
+  } catch (err) {
+    if (
+      err instanceof TypeError ||
+      (err instanceof Error && err.message.includes('ECONNREFUSED'))
+    ) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+/**
  * Transcribe an audio file to text using parakeet-mlx.
+ * Uses persistent STT server when available, falls back to CLI.
  * Accepts any format ffmpeg can handle (ogg, wav, mp3, etc.)
  */
 export async function transcribe(audioPath: string): Promise<string> {
+  // Try persistent server first
+  const serverResult = await transcribeViaServer(audioPath);
+  if (serverResult !== null) {
+    return serverResult;
+  }
+
+  logger.info('STT server unavailable, falling back to CLI');
   const tmpDir = fs.mkdtempSync('/tmp/nanoclaw-stt-');
   try {
     // Convert to wav (parakeet-mlx works best with wav)
@@ -242,10 +290,7 @@ export async function textToSpeech(text: string): Promise<string> {
       fs.copyFileSync(wavFiles[0], combinedWav);
     } else {
       const listFile = path.join(tmpDir, 'concat.txt');
-      fs.writeFileSync(
-        listFile,
-        wavFiles.map((f) => `file '${f}'`).join('\n'),
-      );
+      fs.writeFileSync(listFile, wavFiles.map((f) => `file '${f}'`).join('\n'));
       await execAsync(
         `ffmpeg -f concat -safe 0 -i ${JSON.stringify(listFile)} -y ${JSON.stringify(combinedWav)}`,
         { timeout: 30000 },
