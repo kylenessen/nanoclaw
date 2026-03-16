@@ -8,15 +8,19 @@ import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { transcribe } from '../voice.js';
+import { NewMessage, RegisteredGroup } from '../types.js';
 
 const execAsync = promisify(exec);
-import { registerChannel, ChannelOpts } from './registry.js';
-import {
-  Channel,
-  OnChatMetadata,
-  OnInboundMessage,
-  RegisteredGroup,
-} from '../types.js';
+
+export type OnInboundMessage = (chatJid: string, message: NewMessage) => void;
+
+export type OnChatMetadata = (
+  chatJid: string,
+  timestamp: string,
+  name?: string,
+  channel?: string,
+  isGroup?: boolean,
+) => void;
 
 export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
@@ -27,8 +31,6 @@ export interface TelegramChannelOpts {
 
 /**
  * Send a message with Telegram Markdown parse mode, falling back to plain text.
- * Claude's output naturally matches Telegram's Markdown v1 format:
- *   *bold*, _italic_, `code`, ```code blocks```, [links](url)
  */
 async function sendTelegramMessage(
   api: { sendMessage: Api['sendMessage'] },
@@ -42,13 +44,12 @@ async function sendTelegramMessage(
       parse_mode: 'Markdown',
     });
   } catch (err) {
-    // Fallback: send as plain text if Markdown parsing fails
     logger.debug({ err }, 'Markdown send failed, falling back to plain text');
     await api.sendMessage(chatId, text, options);
   }
 }
 
-export class TelegramChannel implements Channel {
+export class TelegramChannel {
   name = 'telegram';
 
   private bot: Bot | null = null;
@@ -67,7 +68,6 @@ export class TelegramChannel implements Channel {
       },
     });
 
-    // Command to get chat ID (useful for registration)
     this.bot.command('chatid', (ctx) => {
       const chatId = ctx.chat.id;
       const chatType = ctx.chat.type;
@@ -82,12 +82,10 @@ export class TelegramChannel implements Channel {
       );
     });
 
-    // Command to check bot status
     this.bot.command('ping', (ctx) => {
       ctx.reply(`${ASSISTANT_NAME} is online.`);
     });
 
-    // Command to start a fresh session
     this.bot.command('new', async (ctx) => {
       const chatJid = `tg:${ctx.chat.id}`;
       const group = this.opts.registeredGroups()[chatJid];
@@ -96,8 +94,6 @@ export class TelegramChannel implements Channel {
         return;
       }
       try {
-        // Mark session as reset BEFORE killing the agent, so the dying
-        // agent's close handler doesn't write the old session ID back.
         this.opts.resetSession(group.folder, chatJid);
         try {
           await execAsync(`pkill -f "nanoclaw-bare-${group.folder}"`);
@@ -115,8 +111,6 @@ export class TelegramChannel implements Channel {
       }
     });
 
-    // Telegram bot commands handled above — skip them in the general handler
-    // so they don't also get stored as messages. All other /commands flow through.
     const TELEGRAM_BOT_COMMANDS = new Set(['chatid', 'ping', 'new']);
 
     this.bot.on('message:text', async (ctx) => {
@@ -136,15 +130,12 @@ export class TelegramChannel implements Channel {
       const sender = ctx.from?.id.toString() || '';
       const msgId = ctx.message.message_id.toString();
 
-      // Determine chat name
       const chatName =
         ctx.chat.type === 'private'
           ? senderName
           : (ctx.chat as any).title || chatJid;
 
-      // Translate Telegram @bot_username mentions into TRIGGER_PATTERN format.
-      // Telegram @mentions (e.g., @andy_ai_bot) won't match TRIGGER_PATTERN
-      // (e.g., ^@Andy\b), so we prepend the trigger when the bot is @mentioned.
+      // Translate Telegram @bot_username mentions into TRIGGER_PATTERN format
       const botUsername = ctx.me?.username?.toLowerCase();
       if (botUsername) {
         const entities = ctx.message.entities || [];
@@ -162,7 +153,6 @@ export class TelegramChannel implements Channel {
         }
       }
 
-      // Store chat metadata for discovery
       const isGroup =
         ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
       this.opts.onChatMetadata(
@@ -173,7 +163,6 @@ export class TelegramChannel implements Channel {
         isGroup,
       );
 
-      // Only deliver full message for registered groups
       const group = this.opts.registeredGroups()[chatJid];
       if (!group) {
         logger.debug(
@@ -183,7 +172,6 @@ export class TelegramChannel implements Channel {
         return;
       }
 
-      // Deliver message — startMessageLoop() will pick it up
       this.opts.onMessage(chatJid, {
         id: msgId,
         chat_jid: chatJid,
@@ -200,7 +188,6 @@ export class TelegramChannel implements Channel {
       );
     });
 
-    // Handle non-text messages with placeholders so the agent knows something was sent
     const storeNonText = (ctx: any, placeholder: string) => {
       const chatJid = `tg:${ctx.chat.id}`;
       const group = this.opts.registeredGroups()[chatJid];
@@ -237,7 +224,6 @@ export class TelegramChannel implements Channel {
     this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
 
-    // Voice messages: download, transcribe, and deliver as text with voice flag
     this.bot.on('message:voice', async (ctx) => {
       const chatJid = `tg:${ctx.chat.id}`;
       const group = this.opts.registeredGroups()[chatJid];
@@ -265,7 +251,6 @@ export class TelegramChannel implements Channel {
       );
 
       try {
-        // Download voice file from Telegram
         const file = await ctx.getFile();
         const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
         const tmpPath = `/tmp/nanoclaw-voice-${Date.now()}.ogg`;
@@ -283,7 +268,6 @@ export class TelegramChannel implements Channel {
             .on('error', reject);
         });
 
-        // Transcribe
         const text = await transcribe(tmpPath);
         try {
           fs.unlinkSync(tmpPath);
@@ -314,7 +298,6 @@ export class TelegramChannel implements Channel {
         });
       } catch (err) {
         logger.error({ err, chatJid }, 'Failed to transcribe voice message');
-        // Fall back to placeholder
         storeNonText(ctx, '[Voice message - transcription failed]');
       }
     });
@@ -331,19 +314,16 @@ export class TelegramChannel implements Channel {
     this.bot.on('message:location', (ctx) => storeNonText(ctx, '[Location]'));
     this.bot.on('message:contact', (ctx) => storeNonText(ctx, '[Contact]'));
 
-    // Handle errors gracefully
     this.bot.catch((err) => {
       logger.error({ err: err.message }, 'Telegram bot error');
     });
 
-    // Register bot commands with Telegram so they show in the menu
     await this.bot.api.setMyCommands([
       { command: 'new', description: 'Start a fresh session' },
       { command: 'ping', description: 'Check if Dex is online' },
       { command: 'chatid', description: "Get this chat's ID" },
     ]);
 
-    // Start polling — returns a Promise that resolves when started
     return new Promise<void>((resolve) => {
       this.bot!.start({
         onStart: (botInfo) => {
@@ -369,8 +349,6 @@ export class TelegramChannel implements Channel {
 
     try {
       const numericId = jid.replace(/^tg:/, '');
-
-      // Telegram has a 4096 character limit per message — split if needed
       const MAX_LENGTH = 4096;
       if (text.length <= MAX_LENGTH) {
         await sendTelegramMessage(this.bot.api, numericId, text);
@@ -409,10 +387,6 @@ export class TelegramChannel implements Channel {
     return this.bot !== null;
   }
 
-  ownsJid(jid: string): boolean {
-    return jid.startsWith('tg:');
-  }
-
   async disconnect(): Promise<void> {
     if (this.bot) {
       this.bot.stop();
@@ -435,7 +409,6 @@ export class TelegramChannel implements Channel {
       return;
     }
 
-    // Already typing for this chat — don't stack intervals
     if (this.typingIntervals.has(jid)) return;
 
     const numericId = jid.replace(/^tg:/, '');
@@ -445,13 +418,14 @@ export class TelegramChannel implements Channel {
       });
     };
 
-    // Send immediately, then refresh every 4s (Telegram expires after ~5s)
     sendAction();
     this.typingIntervals.set(jid, setInterval(sendAction, 4000));
   }
 }
 
-registerChannel('telegram', (opts: ChannelOpts) => {
+export function createTelegram(
+  opts: TelegramChannelOpts,
+): TelegramChannel | null {
   const envVars = readEnvFile(['TELEGRAM_BOT_TOKEN']);
   const token =
     process.env.TELEGRAM_BOT_TOKEN || envVars.TELEGRAM_BOT_TOKEN || '';
@@ -460,4 +434,4 @@ registerChannel('telegram', (opts: ChannelOpts) => {
     return null;
   }
   return new TelegramChannel(token, opts);
-});
+}

@@ -2,9 +2,6 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 // --- Mocks ---
 
-// Mock registry (registerChannel runs at import time)
-vi.mock('./registry.js', () => ({ registerChannel: vi.fn() }));
-
 // Mock env reader (used by the factory, not needed in unit tests)
 vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
 
@@ -811,35 +808,6 @@ describe('TelegramChannel', () => {
       await channel.sendMessage('tg:100200300', 'No bot');
 
       // No error, no API call
-    });
-  });
-
-  // --- ownsJid ---
-
-  describe('ownsJid', () => {
-    it('owns tg: JIDs', () => {
-      const channel = new TelegramChannel('test-token', createTestOpts());
-      expect(channel.ownsJid('tg:123456')).toBe(true);
-    });
-
-    it('owns tg: JIDs with negative IDs (groups)', () => {
-      const channel = new TelegramChannel('test-token', createTestOpts());
-      expect(channel.ownsJid('tg:-1001234567890')).toBe(true);
-    });
-
-    it('does not own WhatsApp group JIDs', () => {
-      const channel = new TelegramChannel('test-token', createTestOpts());
-      expect(channel.ownsJid('12345@g.us')).toBe(false);
-    });
-
-    it('does not own WhatsApp DM JIDs', () => {
-      const channel = new TelegramChannel('test-token', createTestOpts());
-      expect(channel.ownsJid('12345@s.whatsapp.net')).toBe(false);
-    });
-
-    it('does not own unknown JID formats', () => {
-      const channel = new TelegramChannel('test-token', createTestOpts());
-      expect(channel.ownsJid('random-string')).toBe(false);
     });
   });
 
