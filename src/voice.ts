@@ -4,7 +4,11 @@
  * TTS: mlx-audio with Qwen3-TTS (local Apple Silicon)
  *
  * Both STT and TTS providers are configurable via .env:
- *   STT_COMMAND, TTS_COMMAND, TTS_MODEL, TTS_VOICE, TTS_INSTRUCT
+ *   STT_COMMAND, TTS_COMMAND, TTS_MODEL, TTS_VOICE, TTS_INSTRUCT,
+ *   TTS_REF_AUDIO, TTS_REF_TEXT
+ *
+ * Voice cloning mode (Base model + ref_audio) is used when TTS_REF_AUDIO is set.
+ * Otherwise falls back to CustomVoice mode with named speaker + instruct.
  */
 import { exec } from 'child_process';
 import fs from 'fs';
@@ -21,10 +25,28 @@ const voiceConfig = readEnvFile([
   'TTS_MODEL',
   'TTS_VOICE',
   'TTS_INSTRUCT',
+  'TTS_REF_AUDIO',
+  'TTS_REF_TEXT',
 ]);
+
+// Voice cloning mode: Base model + reference audio
+const TTS_REF_AUDIO = voiceConfig.TTS_REF_AUDIO || 'audio/feynman_ref.wav';
+const TTS_REF_TEXT =
+  voiceConfig.TTS_REF_TEXT ||
+  "be true, may not be true, but it hasn't been demonstrated one way or the other. But they'll sit there on the typewriter and make up all this stuff as if it's science, and then become an expert on foods, organic foods, and so on. There's all kinds of myths and pseudoscience all over the place.";
+
+// Resolve ref audio path relative to project root
+const PROJECT_ROOT = path.resolve(import.meta.dirname, '..');
+const refAudioAbsPath = path.isAbsolute(TTS_REF_AUDIO)
+  ? TTS_REF_AUDIO
+  : path.join(PROJECT_ROOT, TTS_REF_AUDIO);
+const useVoiceClone = fs.existsSync(refAudioAbsPath);
+
 const TTS_MODEL =
   voiceConfig.TTS_MODEL ||
-  'mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16';
+  (useVoiceClone
+    ? 'mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16'
+    : 'mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16');
 const TTS_VOICE = voiceConfig.TTS_VOICE || 'Ryan';
 const TTS_INSTRUCT =
   voiceConfig.TTS_INSTRUCT || 'Calm, clear, conversational tone.';
@@ -120,10 +142,13 @@ export async function textToSpeech(text: string): Promise<string> {
       const chunkDir = path.join(tmpDir, `chunk_${i}`);
       fs.mkdirSync(chunkDir, { recursive: true });
 
-      await execAsync(
-        `mlx_audio.tts.generate --model ${JSON.stringify(TTS_MODEL)} --text ${JSON.stringify(chunks[i])} --voice ${JSON.stringify(TTS_VOICE)} --instruct ${JSON.stringify(TTS_INSTRUCT)} --output_path ${JSON.stringify(chunkDir)}`,
-        { timeout: 120000 },
-      );
+      const ttsArgs = useVoiceClone
+        ? `--model ${JSON.stringify(TTS_MODEL)} --text ${JSON.stringify(chunks[i])} --ref_audio ${JSON.stringify(refAudioAbsPath)} --ref_text ${JSON.stringify(TTS_REF_TEXT)} --output_path ${JSON.stringify(chunkDir)}`
+        : `--model ${JSON.stringify(TTS_MODEL)} --text ${JSON.stringify(chunks[i])} --voice ${JSON.stringify(TTS_VOICE)} --instruct ${JSON.stringify(TTS_INSTRUCT)} --output_path ${JSON.stringify(chunkDir)}`;
+
+      await execAsync(`mlx_audio.tts.generate ${ttsArgs}`, {
+        timeout: 120000,
+      });
 
       const chunkWav = path.join(chunkDir, 'audio_000.wav');
       if (fs.existsSync(chunkWav)) {
@@ -141,10 +166,7 @@ export async function textToSpeech(text: string): Promise<string> {
       fs.copyFileSync(wavFiles[0], combinedWav);
     } else {
       const listFile = path.join(tmpDir, 'concat.txt');
-      fs.writeFileSync(
-        listFile,
-        wavFiles.map((f) => `file '${f}'`).join('\n'),
-      );
+      fs.writeFileSync(listFile, wavFiles.map((f) => `file '${f}'`).join('\n'));
       await execAsync(
         `ffmpeg -f concat -safe 0 -i ${JSON.stringify(listFile)} -y ${JSON.stringify(combinedWav)}`,
         { timeout: 30000 },
