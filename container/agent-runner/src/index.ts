@@ -362,6 +362,7 @@ async function runQuery(
     const messages = drainIpcInput();
     for (const text of messages) {
       log(`Piping IPC message into active query (${text.length} chars)`);
+      agentUsedSendMessage = false; // Reset: new user message means next result is a real response
       stream.push(text);
     }
     setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
@@ -372,6 +373,19 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  let sawTaskNotification = false; // Track if the current result is just a task-notification reaction
+
+  // Track whether send_message IPC was used since the last user message.
+  // If so, the result text is a status summary (not user-facing) since the
+  // real content was already delivered via send_message.
+  const ipcMessagesDir = path.join(WORKSPACE_IPC, 'messages');
+  let ipcMessageCountAtLastCheck = 0;
+  let agentUsedSendMessage = false;
+  try {
+    ipcMessageCountAtLastCheck = fs.existsSync(ipcMessagesDir)
+      ? fs.readdirSync(ipcMessagesDir).filter(f => f.endsWith('.json')).length
+      : 0;
+  } catch { /* ignore */ }
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = path.join(WORKSPACE_GLOBAL, 'CLAUDE.md');
@@ -454,17 +468,42 @@ async function runQuery(
     if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
       const tn = message as { task_id: string; status: string; summary: string };
       log(`Task notification: task=${tn.task_id} status=${tn.status} summary=${tn.summary}`);
+      sawTaskNotification = true;
     }
 
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
-      writeOutput({
-        status: 'success',
-        result: textResult || null,
-        newSessionId
-      });
+
+      // Check if send_message was used since our last check
+      try {
+        const currentCount = fs.existsSync(ipcMessagesDir)
+          ? fs.readdirSync(ipcMessagesDir).filter(f => f.endsWith('.json')).length
+          : 0;
+        if (currentCount > ipcMessageCountAtLastCheck) {
+          agentUsedSendMessage = true;
+          ipcMessageCountAtLastCheck = currentCount;
+        }
+      } catch { /* ignore */ }
+
+      const suppressed = sawTaskNotification
+        ? 'task-notification reaction'
+        : agentUsedSendMessage
+          ? 'send_message already delivered content'
+          : null;
+
+      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}${suppressed ? ` (${suppressed}, suppressed)` : ''}`);
+
+      if (suppressed) {
+        sawTaskNotification = false;
+        agentUsedSendMessage = false;
+      } else {
+        writeOutput({
+          status: 'success',
+          result: textResult || null,
+          newSessionId
+        });
+      }
     }
   }
 
