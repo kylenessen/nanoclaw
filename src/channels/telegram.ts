@@ -285,7 +285,11 @@ export class TelegramChannel implements Channel {
 
         // Transcribe
         const text = await transcribe(tmpPath);
-        try { fs.unlinkSync(tmpPath); } catch { /* best effort */ }
+        try {
+          fs.unlinkSync(tmpPath);
+        } catch {
+          /* best effort */
+        }
 
         logger.info(
           { chatJid, senderName, textLength: text.length },
@@ -397,6 +401,7 @@ export class TelegramChannel implements Channel {
       logger.info({ jid }, 'Telegram voice message sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram voice message');
+      throw err;
     }
   }
 

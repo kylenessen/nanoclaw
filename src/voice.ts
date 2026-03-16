@@ -50,7 +50,7 @@ const useVoiceClone = fs.existsSync(refAudioAbsPath);
 const TTS_MODEL =
   voiceConfig.TTS_MODEL ||
   (useVoiceClone
-    ? 'mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16'
+    ? 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit'
     : 'mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16');
 const TTS_VOICE = voiceConfig.TTS_VOICE || 'Ryan';
 const TTS_INSTRUCT =
@@ -60,9 +60,7 @@ const TTS_INSTRUCT =
  * Transcribe via the persistent STT server.
  * Returns the text, or null if the server is unreachable.
  */
-async function transcribeViaServer(
-  audioPath: string,
-): Promise<string | null> {
+async function transcribeViaServer(audioPath: string): Promise<string | null> {
   try {
     const resp = await fetch(STT_SERVER_URL, {
       method: 'POST',

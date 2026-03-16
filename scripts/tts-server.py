@@ -40,7 +40,7 @@ from mlx_audio.tts.utils import load_model
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=7890)
-    parser.add_argument("--model", default="mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16")
+    parser.add_argument("--model", default="mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit")
     args = parser.parse_args()
 
     print(f"Loading TTS model: {args.model}", flush=True)
