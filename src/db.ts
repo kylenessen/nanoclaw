@@ -371,6 +371,15 @@ export function getMessagesSince(
     .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
 }
 
+export function isLastMessageVoice(chatJid: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT is_voice FROM messages WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 1`,
+    )
+    .get(chatJid) as { is_voice: number } | undefined;
+  return !!row?.is_voice;
+}
+
 export function createTask(
   task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
 ): void {

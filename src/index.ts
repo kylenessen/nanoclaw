@@ -36,6 +36,7 @@ import {
   getRegisteredGroup,
   getRouterState,
   initDatabase,
+  isLastMessageVoice,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -213,12 +214,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  // Determine voice mode from the last message in the batch
-  // If the most recent message was voice, respond with voice
-  // SQLite returns is_voice as 1/0 integer, NewMessage has it as boolean
-  const lastMsg = missedMessages[missedMessages.length - 1];
-  const isVoiceMode = !!(lastMsg?.is_voice);
-
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
@@ -230,7 +225,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        // Voice-originated: convert response to audio and send as voice
+        // Check voice mode dynamically — the latest message in the DB
+        // determines response format, so piped text messages after a voice
+        // message correctly switch back to text responses.
+        const isVoiceMode = isLastMessageVoice(chatJid);
         if (isVoiceMode && channel.sendVoice) {
           try {
             const audioPath = textToSpeech(text);
