@@ -22,7 +22,7 @@ export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
-  resetSession: (groupFolder: string) => void;
+  resetSession: (groupFolder: string, chatJid: string) => void;
 }
 
 /**
@@ -98,7 +98,7 @@ export class TelegramChannel implements Channel {
       try {
         // Mark session as reset BEFORE killing the agent, so the dying
         // agent's close handler doesn't write the old session ID back.
-        this.opts.resetSession(group.folder);
+        this.opts.resetSession(group.folder, chatJid);
         try {
           await execAsync(`pkill -f "nanoclaw-bare-${group.folder}"`);
         } catch {

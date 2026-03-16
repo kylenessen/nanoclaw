@@ -565,11 +565,18 @@ async function main(): Promise<void> {
 
   // Reset session: clears both in-memory and DB state, marks the group
   // so the dying agent's close handler doesn't write the old session back.
-  function resetSession(groupFolder: string): void {
+  // Also advances the message cursor so old messages aren't reprocessed.
+  function resetSession(groupFolder: string, chatJid: string): void {
     delete sessions[groupFolder];
     deleteSession(groupFolder);
     sessionResetPending.add(groupFolder);
-    logger.info({ groupFolder }, 'Session reset (in-memory + DB cleared)');
+    // Advance cursor to now so old messages don't replay into the new session
+    lastAgentTimestamp[chatJid] = new Date().toISOString();
+    saveState();
+    logger.info(
+      { groupFolder, chatJid },
+      'Session reset (in-memory + DB cleared, cursor advanced)',
+    );
   }
 
   // Channel callbacks (shared by all channels)
