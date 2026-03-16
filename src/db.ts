@@ -374,7 +374,7 @@ export function getMessagesSince(
 export function isLastMessageVoice(chatJid: string): boolean {
   const row = db
     .prepare(
-      `SELECT is_voice FROM messages WHERE chat_jid = ? ORDER BY timestamp DESC LIMIT 1`,
+      `SELECT is_voice FROM messages WHERE chat_jid = ? AND is_from_me = 0 AND is_bot_message = 0 ORDER BY timestamp DESC LIMIT 1`,
     )
     .get(chatJid) as { is_voice: number } | undefined;
   return !!row?.is_voice;

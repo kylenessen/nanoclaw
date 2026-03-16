@@ -218,10 +218,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  // In voice mode, buffer all outputs and only send the final one as voice.
-  // Intermediate outputs (status updates, tool summaries) are suppressed.
-  const isVoiceMode = isLastMessageVoice(chatJid) && !!channel.sendVoice;
-
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
@@ -233,9 +229,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        if (isVoiceMode) {
-          // TTS and send immediately — can't wait for runAgent to return
-          // since the container stays alive for idle-wait (30 min).
+        // Check voice mode dynamically per-output so modality matches
+        // the user's most recent message, not the one that started the session.
+        const useVoice = isLastMessageVoice(chatJid) && !!channel.sendVoice;
+        if (useVoice) {
           try {
             const audioPath = await textToSpeech(text);
             await channel.sendVoice!(chatJid, audioPath);
