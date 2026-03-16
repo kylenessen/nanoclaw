@@ -213,6 +213,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await channel.setTyping?.(chatJid, true);
   let hadError = false;
   let outputSentToUser = false;
+  let voiceOutputSent = false; // Only send first output as voice to prevent spam
 
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
@@ -229,11 +230,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // determines response format, so piped text messages after a voice
         // message correctly switch back to text responses.
         const isVoiceMode = isLastMessageVoice(chatJid);
-        if (isVoiceMode && channel.sendVoice) {
+        if (isVoiceMode && channel.sendVoice && !voiceOutputSent) {
+          // Only TTS the first output per invocation — subsequent outputs
+          // (e.g. status updates, tool result summaries) go as text to
+          // prevent a flood of short voice memos.
           try {
             const audioPath = await textToSpeech(text);
             await channel.sendVoice(chatJid, audioPath);
             cleanupTtsFile(audioPath);
+            voiceOutputSent = true;
           } catch (ttsErr) {
             logger.error({ ttsErr }, 'TTS failed, falling back to text');
             await channel.sendMessage(chatJid, text);
