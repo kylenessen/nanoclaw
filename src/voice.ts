@@ -33,7 +33,7 @@ const voiceConfig = readEnvFile([
 const TTS_REF_AUDIO = voiceConfig.TTS_REF_AUDIO || 'audio/c3po_ref.wav';
 const TTS_REF_TEXT =
   voiceConfig.TTS_REF_TEXT ||
-  'I must point out that the odds of successfully navigating this situation are approximately three thousand seven hundred and twenty to one. However, I am fluent in over six million forms of communication, and I believe a diplomatic approach would be far more prudent.';
+  'Oh my, this is quite beyond my programming. I do wish you wouldn\'t rush into these things without consulting me first. I am a protocol droid, after all, not a battle droid. Sir, if I may suggest a more cautious approach, I believe we could avoid a great deal of unnecessary trouble. The odds are not in our favor, but with proper planning, I am confident we can manage. Do trust me on this.';
 
 // Resolve ref audio path relative to project root
 const PROJECT_ROOT = path.resolve(import.meta.dirname, '..');
