@@ -14,10 +14,7 @@ import {
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './agent.js';
-import {
-  createTelegram,
-  TelegramChannel,
-} from './channels/telegram.js';
+import { createTelegram, TelegramChannel } from './channels/telegram.js';
 import {
   getAllChats,
   getAllRegisteredGroups,
@@ -169,10 +166,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const resetIdleTimer = () => {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      logger.debug(
-        { group: group.name },
-        'Idle timeout, closing agent stdin',
-      );
+      logger.debug({ group: group.name }, 'Idle timeout, closing agent stdin');
       queue.closeStdin(chatJid);
     }, IDLE_TIMEOUT);
   };
@@ -181,44 +175,52 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgentForGroup(group, prompt, chatJid, async (result) => {
-    if (result.result) {
-      const raw =
-        typeof result.result === 'string'
-          ? result.result
-          : JSON.stringify(result.result);
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
-      if (text) {
-        await telegram.setTyping(chatJid, false);
-        const useVoice = isLastMessageVoice(chatJid);
-        if (useVoice) {
-          try {
-            const audioPath = await textToSpeech(text);
-            await telegram.sendVoice(chatJid, audioPath);
-            cleanupTtsFile(audioPath);
-            outputSentToUser = true;
-          } catch (ttsErr) {
-            logger.error({ ttsErr }, 'TTS failed, falling back to text');
+  const output = await runAgentForGroup(
+    group,
+    prompt,
+    chatJid,
+    async (result) => {
+      if (result.result) {
+        const raw =
+          typeof result.result === 'string'
+            ? result.result
+            : JSON.stringify(result.result);
+        const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        logger.info(
+          { group: group.name },
+          `Agent output: ${raw.slice(0, 200)}`,
+        );
+        if (text) {
+          await telegram.setTyping(chatJid, false);
+          const useVoice = isLastMessageVoice(chatJid);
+          if (useVoice) {
+            try {
+              const audioPath = await textToSpeech(text);
+              await telegram.sendVoice(chatJid, audioPath);
+              cleanupTtsFile(audioPath);
+              outputSentToUser = true;
+            } catch (ttsErr) {
+              logger.error({ ttsErr }, 'TTS failed, falling back to text');
+              await telegram.sendMessage(chatJid, text);
+              outputSentToUser = true;
+            }
+          } else {
             await telegram.sendMessage(chatJid, text);
             outputSentToUser = true;
           }
-        } else {
-          await telegram.sendMessage(chatJid, text);
-          outputSentToUser = true;
         }
+        resetIdleTimer();
       }
-      resetIdleTimer();
-    }
 
-    if (result.status === 'success') {
-      queue.notifyIdle(chatJid);
-    }
+      if (result.status === 'success') {
+        queue.notifyIdle(chatJid);
+      }
 
-    if (result.status === 'error') {
-      hadError = true;
-    }
-  });
+      if (result.status === 'error') {
+        hadError = true;
+      }
+    },
+  );
 
   await telegram.setTyping(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -309,10 +311,7 @@ async function runAgentForGroup(
     }
 
     if (output.status === 'error') {
-      logger.error(
-        { group: group.name, error: output.error },
-        'Agent error',
-      );
+      logger.error({ group: group.name, error: output.error }, 'Agent error');
       return 'error';
     }
 
@@ -510,7 +509,9 @@ async function main(): Promise<void> {
   });
 
   if (!tg) {
-    logger.fatal('Telegram bot failed to initialize — check TELEGRAM_BOT_TOKEN');
+    logger.fatal(
+      'Telegram bot failed to initialize — check TELEGRAM_BOT_TOKEN',
+    );
     process.exit(1);
   }
   telegram = tg;
