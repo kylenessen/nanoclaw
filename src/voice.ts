@@ -30,10 +30,10 @@ const voiceConfig = readEnvFile([
 ]);
 
 // Voice cloning mode: Base model + reference audio
-const TTS_REF_AUDIO = voiceConfig.TTS_REF_AUDIO || 'audio/feynman_ref.wav';
+const TTS_REF_AUDIO = voiceConfig.TTS_REF_AUDIO || 'audio/c3po_ref.wav';
 const TTS_REF_TEXT =
   voiceConfig.TTS_REF_TEXT ||
-  "be true, may not be true, but it hasn't been demonstrated one way or the other. But they'll sit there on the typewriter and make up all this stuff as if it's science, and then become an expert on foods, organic foods, and so on. There's all kinds of myths and pseudoscience all over the place.";
+  'I must point out that the odds of successfully navigating this situation are approximately three thousand seven hundred and twenty to one. However, I am fluent in over six million forms of communication, and I believe a diplomatic approach would be far more prudent.';
 
 // Resolve ref audio path relative to project root
 const PROJECT_ROOT = path.resolve(import.meta.dirname, '..');
