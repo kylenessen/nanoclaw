@@ -108,9 +108,7 @@ function createSchema(database: Database.Database): void {
 
   // Add is_voice column if it doesn't exist (migration for existing DBs)
   try {
-    database.exec(
-      `ALTER TABLE messages ADD COLUMN is_voice INTEGER DEFAULT 0`,
-    );
+    database.exec(`ALTER TABLE messages ADD COLUMN is_voice INTEGER DEFAULT 0`);
   } catch {
     /* column already exists */
   }
@@ -534,6 +532,10 @@ export function setSession(groupFolder: string, sessionId: string): void {
   db.prepare(
     'INSERT OR REPLACE INTO sessions (group_folder, session_id) VALUES (?, ?)',
   ).run(groupFolder, sessionId);
+}
+
+export function deleteSession(groupFolder: string): void {
+  db.prepare('DELETE FROM sessions WHERE group_folder = ?').run(groupFolder);
 }
 
 export function getAllSessions(): Record<string, string> {

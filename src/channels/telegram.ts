@@ -2,6 +2,8 @@ import fs from 'fs';
 import https from 'https';
 import { Api, Bot, InputFile } from 'grammy';
 
+import { execSync } from 'child_process';
+
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
@@ -82,9 +84,35 @@ export class TelegramChannel implements Channel {
       ctx.reply(`${ASSISTANT_NAME} is online.`);
     });
 
+    // Command to start a fresh session
+    this.bot.command('new', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) {
+        ctx.reply('Not a registered chat.');
+        return;
+      }
+      try {
+        // Kill active agent processes for this group
+        try {
+          execSync(`pkill -f "agent-runner/dist"`, { stdio: 'pipe' });
+        } catch {
+          /* no process to kill */
+        }
+        // Clear session from DB
+        const { deleteSession } = await import('../db.js');
+        deleteSession(group.folder);
+        ctx.reply('Fresh session started.');
+        logger.info({ chatJid, folder: group.folder }, 'Session reset via /new');
+      } catch (err) {
+        logger.error({ err }, 'Failed to reset session');
+        ctx.reply('Failed to reset session.');
+      }
+    });
+
     // Telegram bot commands handled above — skip them in the general handler
     // so they don't also get stored as messages. All other /commands flow through.
-    const TELEGRAM_BOT_COMMANDS = new Set(['chatid', 'ping']);
+    const TELEGRAM_BOT_COMMANDS = new Set(['chatid', 'ping', 'new']);
 
     this.bot.on('message:text', async (ctx) => {
       if (ctx.message.text.startsWith('/')) {
