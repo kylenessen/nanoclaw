@@ -452,7 +452,11 @@ export class TelegramChannel {
     }
   }
 
-  async sendPhoto(jid: string, filePath: string, caption?: string): Promise<void> {
+  async sendPhoto(
+    jid: string,
+    filePath: string,
+    caption?: string,
+  ): Promise<void> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
       return;

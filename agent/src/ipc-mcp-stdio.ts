@@ -59,6 +59,15 @@ server.tool(
 
     writeIpcFile(MESSAGES_DIR, data);
 
+    // Increment persistent counter so the agent runner can reliably detect
+    // that send_message was used (the actual message files get consumed by
+    // the host IPC watcher before the runner can count them).
+    try {
+      let count = 0;
+      try { count = parseInt(fs.readFileSync(SEND_MESSAGE_COUNTER_FILE, 'utf-8'), 10) || 0; } catch { /* first call */ }
+      fs.writeFileSync(SEND_MESSAGE_COUNTER_FILE, String(count + 1));
+    } catch { /* best effort */ }
+
     return { content: [{ type: 'text' as const, text: 'Message sent.' }] };
   },
 );

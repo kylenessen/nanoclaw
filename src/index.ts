@@ -551,7 +551,8 @@ async function main(): Promise<void> {
   });
   startIpcWatcher({
     sendMessage: (jid, text) => telegram.sendMessage(jid, text),
-    sendPhoto: (jid, filePath, caption) => telegram.sendPhoto(jid, filePath, caption),
+    sendPhoto: (jid, filePath, caption) =>
+      telegram.sendPhoto(jid, filePath, caption),
     registeredGroups: () => registeredGroups,
     registerGroup,
     syncGroups: async () => {

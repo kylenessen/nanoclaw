@@ -419,14 +419,15 @@ async function runQuery(
   // Track whether send_message IPC was used since the last user message.
   // If so, the result text is a status summary (not user-facing) since the
   // real content was already delivered via send_message.
-  const ipcMessagesDir = path.join(WORKSPACE_IPC, 'messages');
-  let ipcMessageCountAtLastCheck = 0;
+  // Uses a persistent counter file written by the MCP server, avoiding the
+  // race condition where the host IPC watcher deletes message files before
+  // we can count them.
+  const sendMessageCounterFile = path.join(WORKSPACE_IPC, 'send_message_count');
+  let lastSendMessageCount = 0;
   let agentUsedSendMessage = false;
   try {
-    ipcMessageCountAtLastCheck = fs.existsSync(ipcMessagesDir)
-      ? fs.readdirSync(ipcMessagesDir).filter(f => f.endsWith('.json')).length
-      : 0;
-  } catch { /* ignore */ }
+    lastSendMessageCount = parseInt(fs.readFileSync(sendMessageCounterFile, 'utf-8'), 10) || 0;
+  } catch { /* file doesn't exist yet */ }
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
   const globalClaudeMdPath = path.join(WORKSPACE_GLOBAL, 'CLAUDE.md');
@@ -518,12 +519,10 @@ async function runQuery(
 
       // Check if send_message was used since our last check
       try {
-        const currentCount = fs.existsSync(ipcMessagesDir)
-          ? fs.readdirSync(ipcMessagesDir).filter(f => f.endsWith('.json')).length
-          : 0;
-        if (currentCount > ipcMessageCountAtLastCheck) {
+        const currentCount = parseInt(fs.readFileSync(sendMessageCounterFile, 'utf-8'), 10) || 0;
+        if (currentCount > lastSendMessageCount) {
           agentUsedSendMessage = true;
-          ipcMessageCountAtLastCheck = currentCount;
+          lastSendMessageCount = currentCount;
         }
       } catch { /* ignore */ }
 
@@ -580,8 +579,9 @@ async function main(): Promise<void> {
   let sessionId = containerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
 
-  // Clean up stale _close sentinel from previous container runs
+  // Clean up stale _close sentinel and send_message counter from previous runs
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
+  try { fs.unlinkSync(path.join(WORKSPACE_IPC, 'send_message_count')); } catch { /* ignore */ }
 
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
