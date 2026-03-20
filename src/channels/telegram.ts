@@ -452,6 +452,24 @@ export class TelegramChannel {
     }
   }
 
+  async sendPhoto(jid: string, filePath: string, caption?: string): Promise<void> {
+    if (!this.bot) {
+      logger.warn('Telegram bot not initialized');
+      return;
+    }
+
+    try {
+      const numericId = jid.replace(/^tg:/, '');
+      await this.bot.api.sendPhoto(numericId, new InputFile(filePath), {
+        caption,
+      });
+      logger.info({ jid, filePath }, 'Telegram photo sent');
+    } catch (err) {
+      logger.error({ jid, err }, 'Failed to send Telegram photo');
+      throw err;
+    }
+  }
+
   async sendVoice(jid: string, audioPath: string): Promise<void> {
     if (!this.bot) {
       logger.warn('Telegram bot not initialized');
