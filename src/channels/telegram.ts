@@ -1,14 +1,16 @@
 import { exec } from 'child_process';
 import fs from 'fs';
 import https from 'https';
+import path from 'path';
 import { promisify } from 'util';
 import { Api, Bot, InputFile } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
+import { resolveGroupFolderPath } from '../group-folder.js';
 import { logger } from '../logger.js';
 import { transcribe } from '../voice.js';
-import { NewMessage, RegisteredGroup } from '../types.js';
+import { ImageAttachment, NewMessage, RegisteredGroup } from '../types.js';
 
 const execAsync = promisify(exec);
 
@@ -221,7 +223,83 @@ export class TelegramChannel {
       });
     };
 
-    this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
+    this.bot.on('message:photo', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const timestamp = new Date(ctx.message.date * 1000).toISOString();
+      const senderName =
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        undefined,
+        'telegram',
+        isGroup,
+      );
+
+      try {
+        // Get highest resolution photo (last in array)
+        const photos = ctx.message.photo;
+        const bestPhoto = photos[photos.length - 1];
+        const file = await ctx.api.getFile(bestPhoto.file_id);
+        const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
+
+        // Save to group media directory
+        const mediaDir = path.join(resolveGroupFolderPath(group.folder), 'media');
+        fs.mkdirSync(mediaDir, { recursive: true });
+        const ext = path.extname(file.file_path || '.jpg') || '.jpg';
+        const filename = `photo-${Date.now()}-${ctx.message.message_id}${ext}`;
+        const filePath = path.join(mediaDir, filename);
+
+        await new Promise<void>((resolve, reject) => {
+          const dest = fs.createWriteStream(filePath);
+          https
+            .get(fileUrl, (response) => {
+              response.pipe(dest);
+              dest.on('finish', () => {
+                dest.close();
+                resolve();
+              });
+            })
+            .on('error', reject);
+        });
+
+        const mimeType = ext === '.png' ? 'image/png'
+          : ext === '.webp' ? 'image/webp'
+          : ext === '.gif' ? 'image/gif'
+          : 'image/jpeg';
+
+        const images: ImageAttachment[] = [{ path: filePath, mimeType }];
+
+        this.opts.onMessage(chatJid, {
+          id: ctx.message.message_id.toString(),
+          chat_jid: chatJid,
+          sender: ctx.from?.id?.toString() || '',
+          sender_name: senderName,
+          content: `[Photo]${caption}`,
+          timestamp,
+          is_from_me: false,
+          images,
+        });
+
+        logger.info(
+          { chatJid, senderName, filePath },
+          'Photo downloaded and stored',
+        );
+      } catch (err) {
+        logger.error({ err, chatJid }, 'Failed to download photo');
+        storeNonText(ctx, '[Photo]');
+      }
+    });
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
 
     this.bot.on('message:voice', async (ctx) => {

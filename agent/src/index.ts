@@ -27,6 +27,7 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  images?: Array<{ path: string; mimeType: string }>;
 }
 
 interface ContainerOutput {
@@ -47,9 +48,13 @@ interface SessionsIndex {
   entries: SessionEntry[];
 }
 
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
+
 interface SDKUserMessage {
   type: 'user';
-  message: { role: 'user'; content: string };
+  message: { role: 'user'; content: string | ContentBlock[] };
   parent_tool_use_id: null;
   session_id: string;
 }
@@ -78,6 +83,37 @@ class MessageStream {
     this.queue.push({
       type: 'user',
       message: { role: 'user', content: text },
+      parent_tool_use_id: null,
+      session_id: '',
+    });
+    this.waiting?.();
+  }
+
+  pushWithImages(text: string, images: Array<{ path: string; mimeType: string }>): void {
+    const content: ContentBlock[] = [];
+
+    // Add images first so Claude sees them before the text prompt
+    for (const img of images) {
+      try {
+        const data = fs.readFileSync(img.path);
+        content.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: img.mimeType,
+            data: data.toString('base64'),
+          },
+        });
+      } catch (err) {
+        log(`Failed to read image ${img.path}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    content.push({ type: 'text', text });
+
+    this.queue.push({
+      type: 'user',
+      message: { role: 'user', content },
       parent_tool_use_id: null,
       session_id: '',
     });
@@ -343,9 +379,14 @@ async function runQuery(
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
   resumeAt?: string,
+  images?: Array<{ path: string; mimeType: string }>,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
   const stream = new MessageStream();
-  stream.push(prompt);
+  if (images?.length) {
+    stream.pushWithImages(prompt, images);
+  } else {
+    stream.push(prompt);
+  }
 
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
@@ -555,11 +596,13 @@ async function main(): Promise<void> {
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
+  let pendingImages = containerInput.images;
   try {
     while (true) {
-      log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
+      log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'}${pendingImages?.length ? `, images: ${pendingImages.length}` : ''})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt, pendingImages);
+      pendingImages = undefined; // Images only for the first query
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }

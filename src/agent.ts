@@ -33,6 +33,7 @@ export interface AgentInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  images?: Array<{ path: string; mimeType: string }>;
 }
 
 export interface AgentOutput {

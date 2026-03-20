@@ -7,6 +7,11 @@ export interface RegisteredGroup {
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
 }
 
+export interface ImageAttachment {
+  path: string;
+  mimeType: string;
+}
+
 export interface NewMessage {
   id: string;
   chat_jid: string;
@@ -17,6 +22,7 @@ export interface NewMessage {
   is_from_me?: boolean;
   is_bot_message?: boolean;
   is_voice?: boolean;
+  images?: ImageAttachment[];
 }
 
 export interface ScheduledTask {

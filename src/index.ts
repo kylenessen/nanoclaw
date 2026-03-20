@@ -43,7 +43,7 @@ import {
   stopRemoteControl,
 } from './remote-control.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { NewMessage, RegisteredGroup } from './types.js';
+import { ImageAttachment, NewMessage, RegisteredGroup } from './types.js';
 import { textToSpeech, cleanupTtsFile } from './voice.js';
 import { logger } from './logger.js';
 
@@ -150,6 +150,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
 
   const prompt = formatMessages(missedMessages, TIMEZONE);
+  const images = collectImages(missedMessages);
 
   const previousCursor = lastAgentTimestamp[chatJid] || '';
   lastAgentTimestamp[chatJid] =
@@ -157,7 +158,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   saveState();
 
   logger.info(
-    { group: group.name, messageCount: missedMessages.length },
+    { group: group.name, messageCount: missedMessages.length, imageCount: images.length },
     'Processing messages',
   );
 
@@ -179,6 +180,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     group,
     prompt,
     chatJid,
+    images,
     async (result) => {
       if (result.result) {
         const raw =
@@ -245,10 +247,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   return true;
 }
 
+function collectImages(messages: NewMessage[]): ImageAttachment[] {
+  const images: ImageAttachment[] = [];
+  for (const msg of messages) {
+    if (msg.images) {
+      for (const img of msg.images) {
+        images.push(img);
+      }
+    }
+  }
+  return images;
+}
+
 async function runAgentForGroup(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
+  images?: ImageAttachment[],
   onOutput?: (output: AgentOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
@@ -297,6 +312,7 @@ async function runAgentForGroup(
         chatJid,
         isMain,
         assistantName: ASSISTANT_NAME,
+        images: images?.length ? images : undefined,
       },
       (proc, processName) =>
         queue.registerProcess(chatJid, proc, processName, group.folder),
