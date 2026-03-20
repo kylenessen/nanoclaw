@@ -215,6 +215,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             await telegram.sendMessage(chatJid, text);
             outputSentToUser = true;
           }
+          // Restart typing — agent may still be working (tools, more output)
+          // Line 232 cleans this up when the agent fully completes
+          await telegram.setTyping(chatJid, true);
         }
         resetIdleTimer();
       }
