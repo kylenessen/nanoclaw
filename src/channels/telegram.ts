@@ -16,11 +16,13 @@ const execAsync = promisify(exec);
 
 /** Sanitize a chat name into a valid group folder name. */
 function toFolderName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60) || 'chat';
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 60) || 'chat'
+  );
 }
 
 export type OnInboundMessage = (chatJid: string, message: NewMessage) => void;
@@ -86,8 +88,7 @@ export class TelegramChannel {
     if (!this.opts.ownerTelegramId || sender !== this.opts.ownerTelegramId)
       return undefined;
 
-    const isGroup =
-      ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+    const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
     const chatName =
       ctx.chat.type === 'private'
         ? ctx.from?.first_name || 'Private'
@@ -108,11 +109,14 @@ export class TelegramChannel {
       folder,
       trigger: TRIGGER_PATTERN.source,
       added_at: new Date().toISOString(),
-      requiresTrigger: isGroup,
+      requiresTrigger: false,
       isMain: false,
     };
     this.opts.registerGroup(chatJid, group);
-    logger.info({ chatJid, chatName, folder }, 'Auto-registered chat from owner');
+    logger.info(
+      { chatJid, chatName, folder },
+      'Auto-registered chat from owner',
+    );
     return group;
   }
 
