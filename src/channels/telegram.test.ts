@@ -91,6 +91,8 @@ function createTestOpts(
       },
     })),
     resetSession: vi.fn(),
+    registerGroup: vi.fn(),
+    ownerTelegramId: '12345',
     ...overrides,
   };
 }

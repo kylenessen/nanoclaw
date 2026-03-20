@@ -45,6 +45,7 @@ import {
 import { startSchedulerLoop } from './task-scheduler.js';
 import { ImageAttachment, NewMessage, RegisteredGroup } from './types.js';
 import { textToSpeech, cleanupTtsFile } from './voice.js';
+import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -506,6 +507,9 @@ async function main(): Promise<void> {
   }
 
   // Create Telegram bot
+  const envVars = readEnvFile(['TELEGRAM_OWNER_ID']);
+  const ownerTelegramId =
+    process.env.TELEGRAM_OWNER_ID || envVars.TELEGRAM_OWNER_ID || '';
   const tg = createTelegram({
     resetSession,
     onMessage: (chatJid: string, msg: NewMessage) => {
@@ -526,6 +530,8 @@ async function main(): Promise<void> {
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
+    registerGroup,
+    ownerTelegramId,
   });
 
   if (!tg) {

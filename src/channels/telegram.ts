@@ -14,6 +14,15 @@ import { ImageAttachment, NewMessage, RegisteredGroup } from '../types.js';
 
 const execAsync = promisify(exec);
 
+/** Sanitize a chat name into a valid group folder name. */
+function toFolderName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60) || 'chat';
+}
+
 export type OnInboundMessage = (chatJid: string, message: NewMessage) => void;
 
 export type OnChatMetadata = (
@@ -29,6 +38,8 @@ export interface TelegramChannelOpts {
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
   resetSession: (groupFolder: string, chatJid: string) => void;
+  registerGroup: (jid: string, group: RegisteredGroup) => void;
+  ownerTelegramId: string;
 }
 
 /**
@@ -61,6 +72,48 @@ export class TelegramChannel {
   constructor(botToken: string, opts: TelegramChannelOpts) {
     this.botToken = botToken;
     this.opts = opts;
+  }
+
+  /**
+   * Return the registered group for this chat, auto-registering if the sender
+   * is the owner. Returns undefined if the chat should be ignored.
+   */
+  private ensureGroup(ctx: any, chatJid: string): RegisteredGroup | undefined {
+    const existing = this.opts.registeredGroups()[chatJid];
+    if (existing) return existing;
+
+    const sender = ctx.from?.id?.toString() || '';
+    if (!this.opts.ownerTelegramId || sender !== this.opts.ownerTelegramId)
+      return undefined;
+
+    const isGroup =
+      ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+    const chatName =
+      ctx.chat.type === 'private'
+        ? ctx.from?.first_name || 'Private'
+        : (ctx.chat as any).title || chatJid;
+
+    // Deduplicate folder name against existing groups
+    const usedFolders = new Set(
+      Object.values(this.opts.registeredGroups()).map((g) => g.folder),
+    );
+    let folder = toFolderName(chatName);
+    if (usedFolders.has(folder)) {
+      let n = 2;
+      while (usedFolders.has(`${folder}-${n}`)) n++;
+      folder = `${folder}-${n}`;
+    }
+    const group: RegisteredGroup = {
+      name: chatName,
+      folder,
+      trigger: TRIGGER_PATTERN.source,
+      added_at: new Date().toISOString(),
+      requiresTrigger: isGroup,
+      isMain: false,
+    };
+    this.opts.registerGroup(chatJid, group);
+    logger.info({ chatJid, chatName, folder }, 'Auto-registered chat from owner');
+    return group;
   }
 
   async connect(): Promise<void> {
@@ -165,14 +218,8 @@ export class TelegramChannel {
         isGroup,
       );
 
-      const group = this.opts.registeredGroups()[chatJid];
-      if (!group) {
-        logger.debug(
-          { chatJid, chatName },
-          'Message from unregistered Telegram chat',
-        );
-        return;
-      }
+      const group = this.ensureGroup(ctx, chatJid);
+      if (!group) return;
 
       this.opts.onMessage(chatJid, {
         id: msgId,
@@ -192,7 +239,7 @@ export class TelegramChannel {
 
     const storeNonText = (ctx: any, placeholder: string) => {
       const chatJid = `tg:${ctx.chat.id}`;
-      const group = this.opts.registeredGroups()[chatJid];
+      const group = this.ensureGroup(ctx, chatJid);
       if (!group) return;
 
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
@@ -225,7 +272,7 @@ export class TelegramChannel {
 
     this.bot.on('message:photo', async (ctx) => {
       const chatJid = `tg:${ctx.chat.id}`;
-      const group = this.opts.registeredGroups()[chatJid];
+      const group = this.ensureGroup(ctx, chatJid);
       if (!group) return;
 
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
@@ -311,7 +358,7 @@ export class TelegramChannel {
 
     this.bot.on('message:voice', async (ctx) => {
       const chatJid = `tg:${ctx.chat.id}`;
-      const group = this.opts.registeredGroups()[chatJid];
+      const group = this.ensureGroup(ctx, chatJid);
       if (!group) return;
 
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
