@@ -344,10 +344,16 @@ export function getNewMessages(
 
   const rows = db
     .prepare(sql)
-    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as Array<NewMessage & { images?: string }>;
+    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as Array<
+    NewMessage & { images?: string }
+  >;
   for (const row of rows) {
     if (typeof row.images === 'string') {
-      try { row.images = JSON.parse(row.images); } catch { row.images = undefined; }
+      try {
+        row.images = JSON.parse(row.images);
+      } catch {
+        row.images = undefined;
+      }
     }
   }
 
@@ -381,10 +387,16 @@ export function getMessagesSince(
   `;
   const rows = db
     .prepare(sql)
-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as Array<NewMessage & { images?: string }>;
+    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as Array<
+    NewMessage & { images?: string }
+  >;
   for (const row of rows) {
     if (typeof row.images === 'string') {
-      try { row.images = JSON.parse(row.images); } catch { row.images = undefined; }
+      try {
+        row.images = JSON.parse(row.images);
+      } catch {
+        row.images = undefined;
+      }
     }
   }
   return rows;

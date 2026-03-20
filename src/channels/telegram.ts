@@ -254,7 +254,10 @@ export class TelegramChannel {
         const fileUrl = `https://api.telegram.org/file/bot${this.botToken}/${file.file_path}`;
 
         // Save to group media directory
-        const mediaDir = path.join(resolveGroupFolderPath(group.folder), 'media');
+        const mediaDir = path.join(
+          resolveGroupFolderPath(group.folder),
+          'media',
+        );
         fs.mkdirSync(mediaDir, { recursive: true });
         const ext = path.extname(file.file_path || '.jpg') || '.jpg';
         const filename = `photo-${Date.now()}-${ctx.message.message_id}${ext}`;
@@ -273,10 +276,14 @@ export class TelegramChannel {
             .on('error', reject);
         });
 
-        const mimeType = ext === '.png' ? 'image/png'
-          : ext === '.webp' ? 'image/webp'
-          : ext === '.gif' ? 'image/gif'
-          : 'image/jpeg';
+        const mimeType =
+          ext === '.png'
+            ? 'image/png'
+            : ext === '.webp'
+              ? 'image/webp'
+              : ext === '.gif'
+                ? 'image/gif'
+                : 'image/jpeg';
 
         const images: ImageAttachment[] = [{ path: filePath, mimeType }];
 
