@@ -54,6 +54,18 @@ When Kyle sends text, respond with text as normal.
 
 ## Tools
 
+### Apple Calendar
+
+Access Kyle's calendar via scripts in `$CLAUDE_CONFIG_DIR/skills/calendar/scripts/`. Reads are instant (SQLite), creates go through Calendar.app.
+
+```bash
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/list_calendars.sh                       # List all calendars
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/get_events.sh --week markdown            # Next 7 days
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/get_events.sh -c "Calendar" --days 14    # Specific calendar
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/search_events.sh "meeting"               # Search by keyword
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/create_event.sh "Title" "2026-03-20 14:00" "2026-03-20 15:00" "Calendar"
+```
+
 ### Todoist — Actionable Tasks
 
 Kyle uses Todoist for tracking things he needs to do. Use the `td` CLI:

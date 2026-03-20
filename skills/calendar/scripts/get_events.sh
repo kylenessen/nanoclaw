@@ -4,7 +4,7 @@
 #   ./get_events.sh [options] [format]
 #
 # Options:
-#   --today              Get today's events
+#   --today              Get today's events (default)
 #   --week               Get next 7 days
 #   --days N             Get next N days
 #   -c, --calendar NAME  Filter by calendar name
@@ -15,20 +15,16 @@
 #   json                 JSON array
 #
 # Examples:
-#   ./get_events.sh                    # Today's events as TSV
-#   ./get_events.sh markdown           # Today's events as markdown
-#   ./get_events.sh --week markdown    # Next 7 days
-#   ./get_events.sh --days 14 json     # Next 14 days as JSON
-#   ./get_events.sh -c "Work" markdown # Work calendar only
+#   ./get_events.sh                         # Today's events as TSV
+#   ./get_events.sh -c "Work" --week markdown  # Next 7 days from Work calendar
+#   ./get_events.sh --days 14 json          # Next 14 days as JSON
 
 set -e
 
-# Default values
-days=0  # 0 means today only
+days=0
 calendar_filter=""
 format="tsv"
 
-# Parse arguments
 while [ $# -gt 0 ]; do
     case "$1" in
         --today)
@@ -70,94 +66,40 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# Build AppleScript
-if [ -n "$calendar_filter" ]; then
-    # Query specific calendar
-    applescript="
-on flattenText(txt)
-    if txt is missing value then return \"missing value\"
-    set {oldTID, AppleScript's text item delimiters} to {AppleScript's text item delimiters, {return, linefeed, character id 13}}
-    set parts to text items of (txt as text)
-    set AppleScript's text item delimiters to \" \"
-    set flat to parts as text
-    set AppleScript's text item delimiters to oldTID
-    return flat
-end flattenText
+CALDB="$HOME/Library/Group Containers/group.com.apple.calendar/Calendar.sqlitedb"
 
-tell application \"Calendar\"
-    set theCalendar to calendar \"$calendar_filter\"
-    set todayStart to (current date) - (time of (current date))
-    set todayEnd to todayStart + ($days * days) + (24 * hours) - 1
-
-    set eventList to {}
-    set theEvents to every event of theCalendar whose start date ≥ todayStart and start date ≤ todayEnd
-
-    repeat with anEvent in theEvents
-        set calName to name of theCalendar
-        set eventTitle to summary of anEvent
-        set eventStart to start date of anEvent
-        set eventEnd to end date of anEvent
-        set eventLoc to my flattenText(location of anEvent)
-        set eventDesc to my flattenText(description of anEvent)
-
-        set eventInfo to calName & \"|\" & eventTitle & \"|\" & eventStart & \"|\" & eventEnd & \"|\" & eventLoc & \"|\" & eventDesc
-        set end of eventList to eventInfo
-    end repeat
-
-    set AppleScript's text item delimiters to linefeed
-    set output to eventList as text
-    set AppleScript's text item delimiters to \"\"
-    return output
-end tell
-"
-else
-    # Query all calendars
-    applescript="
-on flattenText(txt)
-    if txt is missing value then return \"missing value\"
-    set {oldTID, AppleScript's text item delimiters} to {AppleScript's text item delimiters, {return, linefeed, character id 13}}
-    set parts to text items of (txt as text)
-    set AppleScript's text item delimiters to \" \"
-    set flat to parts as text
-    set AppleScript's text item delimiters to oldTID
-    return flat
-end flattenText
-
-tell application \"Calendar\"
-    set todayStart to (current date) - (time of (current date))
-    set todayEnd to todayStart + ($days * days) + (24 * hours) - 1
-
-    set eventList to {}
-
-    repeat with aCalendar in calendars
-        set calName to name of aCalendar
-        set theEvents to every event of aCalendar whose start date ≥ todayStart and start date ≤ todayEnd
-
-        repeat with anEvent in theEvents
-            set eventTitle to summary of anEvent
-            set eventStart to start date of anEvent
-            set eventEnd to end date of anEvent
-            set eventLoc to my flattenText(location of anEvent)
-            set eventDesc to my flattenText(description of anEvent)
-
-            set eventInfo to calName & \"|\" & eventTitle & \"|\" & eventStart & \"|\" & eventEnd & \"|\" & eventLoc & \"|\" & eventDesc
-            set end of eventList to eventInfo
-        end repeat
-    end repeat
-
-    set AppleScript's text item delimiters to linefeed
-    set output to eventList as text
-    set AppleScript's text item delimiters to \"\"
-    return output
-end tell
-"
+if [ ! -f "$CALDB" ]; then
+    echo "Error: Calendar database not found at $CALDB" >&2
+    exit 1
 fi
 
-# Execute AppleScript and get results
-result=$(osascript -e "$applescript")
+# Build calendar filter clause
+cal_clause=""
+if [ -n "$calendar_filter" ]; then
+    cal_esc=$(echo "$calendar_filter" | sed "s/'/''/g")
+    cal_clause="AND c.title = '$cal_esc'"
+fi
 
-# Handle empty results
-if [ -z "$result" ] || [ "$result" = '""' ]; then
+# CoreData epoch: Jan 1, 2001 = 978307200 seconds after Unix epoch
+result=$(sqlite3 -separator '|' "$CALDB" "
+SELECT c.title, ci.summary,
+       datetime(ci.start_date + 978307200, 'unixepoch', 'localtime'),
+       datetime(ci.end_date + 978307200, 'unixepoch', 'localtime'),
+       COALESCE(l.title, 'missing value'),
+       COALESCE(REPLACE(REPLACE(substr(ci.description, 1, 200), char(10), ' '), char(13), ' '), 'missing value')
+FROM CalendarItem ci
+JOIN Calendar c ON ci.calendar_id = c.ROWID
+LEFT JOIN Location l ON ci.location_id = l.ROWID
+WHERE date(ci.start_date + 978307200, 'unixepoch', 'localtime') >= date('now', 'localtime')
+  AND date(ci.start_date + 978307200, 'unixepoch', 'localtime') <= date('now', 'localtime', '+$days days')
+  $cal_clause
+ORDER BY ci.start_date;
+" 2>/dev/null) || {
+    echo "Error: Failed to query calendar database" >&2
+    exit 1
+}
+
+if [ -z "$result" ]; then
     case "$format" in
         tsv|markdown)
             echo "No events found"
@@ -169,14 +111,12 @@ if [ -z "$result" ] || [ "$result" = '""' ]; then
     exit 0
 fi
 
-# Format output
 case "$format" in
     tsv)
         while IFS='|' read -r cal title start end loc desc; do
             [ -n "$cal" ] && printf "%s\t%s\t%s\t%s\t%s\t%s\n" "$cal" "$title" "$start" "$end" "$loc" "$desc"
         done <<< "$result"
         ;;
-
     markdown)
         while IFS='|' read -r cal title start end loc desc; do
             if [ -n "$cal" ]; then
@@ -194,7 +134,6 @@ case "$format" in
             fi
         done <<< "$result"
         ;;
-
     json)
         echo "["
         first=1
@@ -204,15 +143,12 @@ case "$format" in
                     echo ","
                 fi
                 first=0
-
-                # Escape quotes for JSON
                 cal_esc=$(echo "$cal" | sed 's/"/\\"/g')
                 title_esc=$(echo "$title" | sed 's/"/\\"/g')
                 start_esc=$(echo "$start" | sed 's/"/\\"/g')
                 end_esc=$(echo "$end" | sed 's/"/\\"/g')
                 loc_esc=$(echo "$loc" | sed 's/"/\\"/g')
                 desc_esc=$(echo "$desc" | sed 's/"/\\"/g')
-
                 printf '  {"calendar": "%s", "title": "%s", "start": "%s", "end": "%s", "location": "%s", "description": "%s"}' \
                     "$cal_esc" "$title_esc" "$start_esc" "$end_esc" "$loc_esc" "$desc_esc"
             fi
@@ -220,7 +156,6 @@ case "$format" in
         echo ""
         echo "]"
         ;;
-
     *)
         echo "Unknown format: $format" >&2
         exit 1

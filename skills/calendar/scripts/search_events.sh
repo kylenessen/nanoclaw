@@ -5,6 +5,7 @@
 #
 # Options:
 #   -c, --calendar NAME  Filter by calendar name
+#   -n, --limit N        Max results (default: 20)
 #
 # Formats:
 #   tsv (default)        Tab-separated values
@@ -13,19 +14,12 @@
 #
 # Examples:
 #   ./search_events.sh "meeting"
-#   ./search_events.sh "dentist" markdown
-#   ./search_events.sh -c "Work" "standup" json
+#   ./search_events.sh "dentist" -c "Work" markdown
 
 set -e
 
-# Check required arguments
 if [ $# -lt 1 ]; then
     echo "Usage: $0 QUERY [options] [format]" >&2
-    echo "" >&2
-    echo "Options:" >&2
-    echo "  -c, --calendar NAME  Filter by calendar name" >&2
-    echo "" >&2
-    echo "Formats: tsv (default), markdown, json" >&2
     exit 1
 fi
 
@@ -33,13 +27,17 @@ query="$1"
 shift
 
 calendar_filter=""
+limit=20
 format="tsv"
 
-# Parse remaining arguments
 while [ $# -gt 0 ]; do
     case "$1" in
         -c|--calendar)
             calendar_filter="$2"
+            shift 2
+            ;;
+        -n|--limit)
+            limit="$2"
             shift 2
             ;;
         tsv|markdown|json)
@@ -53,101 +51,40 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# Escape query for AppleScript
-query_esc=$(echo "$query" | sed 's/"/\\"/g')
+CALDB="$HOME/Library/Group Containers/group.com.apple.calendar/Calendar.sqlitedb"
 
-# Build AppleScript
-if [ -n "$calendar_filter" ]; then
-    # Search specific calendar
-    applescript="
-on flattenText(txt)
-    if txt is missing value then return \"missing value\"
-    set {oldTID, AppleScript's text item delimiters} to {AppleScript's text item delimiters, {return, linefeed, character id 13}}
-    set parts to text items of (txt as text)
-    set AppleScript's text item delimiters to \" \"
-    set flat to parts as text
-    set AppleScript's text item delimiters to oldTID
-    return flat
-end flattenText
-
-tell application \"Calendar\"
-    set theCalendar to calendar \"$calendar_filter\"
-    set matchingEvents to {}
-    set allEvents to every event of theCalendar
-
-    repeat with anEvent in allEvents
-        set eventTitle to summary of anEvent
-        set eventDesc to description of anEvent
-
-        -- Check if query is in title or description
-        if eventTitle contains \"$query_esc\" or eventDesc contains \"$query_esc\" then
-            set calName to name of theCalendar
-            set eventStart to start date of anEvent
-            set eventEnd to end date of anEvent
-            set eventLoc to my flattenText(location of anEvent)
-            set eventDescFlat to my flattenText(eventDesc)
-
-            set eventInfo to calName & \"|\" & eventTitle & \"|\" & eventStart & \"|\" & eventEnd & \"|\" & eventLoc & \"|\" & eventDescFlat
-            set end of matchingEvents to eventInfo
-        end if
-    end repeat
-
-    set AppleScript's text item delimiters to linefeed
-    set output to matchingEvents as text
-    set AppleScript's text item delimiters to \"\"
-    return output
-end tell
-"
-else
-    # Search all calendars
-    applescript="
-on flattenText(txt)
-    if txt is missing value then return \"missing value\"
-    set {oldTID, AppleScript's text item delimiters} to {AppleScript's text item delimiters, {return, linefeed, character id 13}}
-    set parts to text items of (txt as text)
-    set AppleScript's text item delimiters to \" \"
-    set flat to parts as text
-    set AppleScript's text item delimiters to oldTID
-    return flat
-end flattenText
-
-tell application \"Calendar\"
-    set matchingEvents to {}
-
-    repeat with aCalendar in calendars
-        set calName to name of aCalendar
-        set allEvents to every event of aCalendar
-
-        repeat with anEvent in allEvents
-            set eventTitle to summary of anEvent
-            set eventDesc to description of anEvent
-
-            -- Check if query is in title or description
-            if eventTitle contains \"$query_esc\" or eventDesc contains \"$query_esc\" then
-                set eventStart to start date of anEvent
-                set eventEnd to end date of anEvent
-                set eventLoc to my flattenText(location of anEvent)
-                set eventDescFlat to my flattenText(eventDesc)
-
-                set eventInfo to calName & \"|\" & eventTitle & \"|\" & eventStart & \"|\" & eventEnd & \"|\" & eventLoc & \"|\" & eventDescFlat
-                set end of matchingEvents to eventInfo
-            end if
-        end repeat
-    end repeat
-
-    set AppleScript's text item delimiters to linefeed
-    set output to matchingEvents as text
-    set AppleScript's text item delimiters to \"\"
-    return output
-end tell
-"
+if [ ! -f "$CALDB" ]; then
+    echo "Error: Calendar database not found at $CALDB" >&2
+    exit 1
 fi
 
-# Execute AppleScript and get results
-result=$(osascript -e "$applescript")
+# Build clauses
+query_esc=$(echo "$query" | sed "s/'/''/g")
+cal_clause=""
+if [ -n "$calendar_filter" ]; then
+    cal_esc=$(echo "$calendar_filter" | sed "s/'/''/g")
+    cal_clause="AND c.title = '$cal_esc'"
+fi
 
-# Handle empty results
-if [ -z "$result" ] || [ "$result" = '""' ]; then
+result=$(sqlite3 -separator '|' "$CALDB" "
+SELECT c.title, ci.summary,
+       datetime(ci.start_date + 978307200, 'unixepoch', 'localtime'),
+       datetime(ci.end_date + 978307200, 'unixepoch', 'localtime'),
+       COALESCE(l.title, 'missing value'),
+       COALESCE(REPLACE(REPLACE(substr(ci.description, 1, 200), char(10), ' '), char(13), ' '), 'missing value')
+FROM CalendarItem ci
+JOIN Calendar c ON ci.calendar_id = c.ROWID
+LEFT JOIN Location l ON ci.location_id = l.ROWID
+WHERE (ci.summary LIKE '%$query_esc%' OR ci.description LIKE '%$query_esc%')
+  $cal_clause
+ORDER BY ci.start_date DESC
+LIMIT $limit;
+" 2>/dev/null) || {
+    echo "Error: Failed to search calendar database" >&2
+    exit 1
+}
+
+if [ -z "$result" ]; then
     case "$format" in
         tsv|markdown)
             echo "No events found matching '$query'"
@@ -159,14 +96,12 @@ if [ -z "$result" ] || [ "$result" = '""' ]; then
     exit 0
 fi
 
-# Format output
 case "$format" in
     tsv)
         while IFS='|' read -r cal title start end loc desc; do
             [ -n "$cal" ] && printf "%s\t%s\t%s\t%s\t%s\t%s\n" "$cal" "$title" "$start" "$end" "$loc" "$desc"
         done <<< "$result"
         ;;
-
     markdown)
         echo "# Search Results for \"$query\""
         echo ""
@@ -186,7 +121,6 @@ case "$format" in
             fi
         done <<< "$result"
         ;;
-
     json)
         echo "["
         first=1
@@ -196,15 +130,12 @@ case "$format" in
                     echo ","
                 fi
                 first=0
-
-                # Escape quotes for JSON
                 cal_esc=$(echo "$cal" | sed 's/"/\\"/g')
                 title_esc=$(echo "$title" | sed 's/"/\\"/g')
                 start_esc=$(echo "$start" | sed 's/"/\\"/g')
                 end_esc=$(echo "$end" | sed 's/"/\\"/g')
                 loc_esc=$(echo "$loc" | sed 's/"/\\"/g')
                 desc_esc=$(echo "$desc" | sed 's/"/\\"/g')
-
                 printf '  {"calendar": "%s", "title": "%s", "start": "%s", "end": "%s", "location": "%s", "description": "%s"}' \
                     "$cal_esc" "$title_esc" "$start_esc" "$end_esc" "$loc_esc" "$desc_esc"
             fi
@@ -212,7 +143,6 @@ case "$format" in
         echo ""
         echo "]"
         ;;
-
     *)
         echo "Unknown format: $format" >&2
         exit 1

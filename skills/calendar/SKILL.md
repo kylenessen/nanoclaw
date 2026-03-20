@@ -7,6 +7,8 @@ description: Interact with Apple Calendar via AppleScript. Use when the user ask
 
 Apple Calendar management via AppleScript.
 
+**Script location**: `$CLAUDE_CONFIG_DIR/skills/calendar/scripts/`
+
 ## Key Scripts
 
 | Script | Purpose |
@@ -19,27 +21,29 @@ Apple Calendar management via AppleScript.
 ## List Calendars
 
 ```bash
-list_calendars.sh           # Simple list
-list_calendars.sh json      # JSON format
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/list_calendars.sh           # Simple list
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/list_calendars.sh json      # JSON format
 ```
 
 ## Getting Events
 
 ```bash
-get_events.sh                    # Today's events as TSV
-get_events.sh markdown           # Today's events as markdown
-get_events.sh --today            # Today's events (TSV)
-get_events.sh --week markdown    # Next 7 days
-get_events.sh --days 14 json     # Next 14 days
-get_events.sh -c "Work"          # Filter by calendar
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/get_events.sh                    # Today's events as TSV
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/get_events.sh markdown           # Today's events as markdown
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/get_events.sh --today            # Today's events (TSV)
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/get_events.sh --week markdown    # Next 7 days
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/get_events.sh --days 14 json     # Next 14 days
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/get_events.sh -c "Work"          # Filter by calendar
 ```
+
+**Performance tip**: Always use `-c CALENDAR_NAME` when possible. Querying all calendars iterates every event and can be very slow/timeout.
 
 ## Creating Events
 
 ```bash
-create_event.sh "Meeting Title" "2025-12-26 14:00" "2025-12-26 15:00"
-create_event.sh "Lunch" "2025-12-27 12:00" "2025-12-27 13:00" "Work"
-create_event.sh "Conference" "2025-12-28 09:00" "2025-12-28 17:00" "Work" "San Francisco" "Annual conference"
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/create_event.sh "Meeting Title" "2025-12-26 14:00" "2025-12-26 15:00"
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/create_event.sh "Lunch" "2025-12-27 12:00" "2025-12-27 13:00" "Work"
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/create_event.sh "Conference" "2025-12-28 09:00" "2025-12-28 17:00" "Work" "San Francisco" "Annual conference"
 ```
 
 Parameters: `title startDate endDate [calendar] [location] [description]`
@@ -47,10 +51,12 @@ Parameters: `title startDate endDate [calendar] [location] [description]`
 ## Search Events
 
 ```bash
-search_events.sh "meeting"
-search_events.sh "dentist" markdown
-search_events.sh -c "Work" "standup"
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/search_events.sh "meeting"
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/search_events.sh "dentist" markdown
+$CLAUDE_CONFIG_DIR/skills/calendar/scripts/search_events.sh -c "Work" "standup" json
 ```
+
+**Performance tip**: Always use `-c CALENDAR_NAME` when possible. Searching all calendars can be very slow.
 
 ## Output Formats
 
@@ -58,8 +64,10 @@ search_events.sh -c "Work" "standup"
 - **Markdown**: Formatted list with dates and times
 - **JSON**: Structured data for processing
 
-**Privacy**: Event data stays local. Calendar.app data accessed via AppleScript only.
+**Privacy**: Event data stays local. Reads use the Calendar SQLite database directly (instant). Creates go through Calendar.app via JXA.
 
 ## Important Notes
 
-**NEVER delete calendar events without explicit user confirmation.** This skill currently does not include a delete script - if the user requests deletion, always ask for confirmation first and warn about the permanent nature of the action.
+- **NEVER delete calendar events without explicit user confirmation.** This skill currently does not include a delete script.
+- **Read operations are instant** — they query the local SQLite database directly, no AppleScript/JXA overhead.
+- **Create operations use JXA** and may take a few seconds as they go through Calendar.app.
