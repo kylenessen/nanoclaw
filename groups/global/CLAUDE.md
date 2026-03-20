@@ -103,3 +103,29 @@ Your current working directory is your persistent workspace — it survives betw
 - Create topical files for structured knowledge (`kyle-preferences.md`, `obligations.md`, etc.)
 - When Kyle shares something worth remembering, capture it immediately
 - Review your notes before responding when past context might be relevant
+
+### QMD — Search Your Memory
+
+You have `qmd` installed — a local hybrid search engine that indexes your conversations, memory files, Signal vault, and voice memos. Use it to recall past context before answering questions about prior work, decisions, or preferences.
+
+**Collections:**
+- `conversations` — archived conversation transcripts (you and Kyle)
+- `agent-memory` — your persistent memory files (profile, preferences, projects)
+- `signal` — Kyle's Obsidian vault (projects, journal, planning)
+- `voice-memos` — Kyle's transcribed voice notes (big-picture thinking)
+
+**Commands:**
+```bash
+qmd search "query"              # Keyword search (fast)
+qmd vsearch "query"             # Semantic/conceptual search
+qmd query "query"               # Hybrid + reranking (best quality, use this by default)
+qmd search "query" -c signal    # Search within a specific collection
+qmd get "qmd://collection/path" # Retrieve a specific document
+qmd update && qmd embed         # Refresh the index (run after creating new notes)
+```
+
+**When to search:**
+- Before answering questions about past conversations or decisions
+- When Kyle references something you discussed before
+- When you need context on a project, preference, or prior commitment
+- When Kyle asks "did I ever..." or "what did we decide about..."
